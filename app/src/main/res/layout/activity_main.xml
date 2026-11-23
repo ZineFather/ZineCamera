@@ -89,23 +89,15 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
 
-        <FrameLayout
-            android:id="@+id/framingMiniContainer"
+        <com.zinecamera.ZoomGuideMapView
+            android:id="@+id/zoomGuideMap"
             android:layout_width="124dp"
             android:layout_height="140dp"
             android:layout_gravity="top|end"
             android:layout_marginTop="12dp"
             android:layout_marginEnd="12dp"
-            android:background="@drawable/bg_status"
-            android:clipToOutline="true"
             android:elevation="8dp"
-            android:visibility="invisible">
-
-            <TextureView
-                android:id="@+id/zoomOverviewPreview"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
-        </FrameLayout>
+            android:visibility="gone" />
 
         <TextView
             android:id="@+id/statusText"
