@@ -57,9 +57,7 @@ class MainActivity : Activity() {
     private lateinit var shutter: View
     private lateinit var recordIndicator: TextView
     private lateinit var settingsButton: TextView
-    private lateinit var overviewPreview: TextureView
-    private var overviewSurface: Surface? = null
-    private lateinit var framingMiniContainer: FrameLayout
+    private lateinit var zoomGuideMap: ZoomGuideMapView
     private lateinit var topBarContainer: View
     private lateinit var bottomControlsContainer: View
     private var flashMode = "OFF"
@@ -146,24 +144,10 @@ class MainActivity : Activity() {
         shutter = findViewById(R.id.shutterButton)
         recordIndicator = findViewById(R.id.recordIndicator)
         settingsButton = findViewById(R.id.settingsButton)
-        framingMiniContainer = findViewById(R.id.framingMiniContainer)
-        overviewPreview = findViewById(R.id.zoomOverviewPreview)
+        zoomGuideMap = findViewById(R.id.zoomGuideMap)
+        zoomGuideMap.setSourceTextureView(preview)
         topBarContainer = findViewById(R.id.topBarContainer)
         bottomControlsContainer = findViewById(R.id.bottomControlsContainer)
-        framingMiniContainer.visibility = View.GONE
-        overviewPreview.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-            override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
-                surface.setDefaultBufferSize(640, 480)
-                if (cameraDevice != null) createPreviewSession()
-            }
-            override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
-            override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean {
-                runCatching { overviewSurface?.release() }
-                overviewSurface = null
-                return true
-            }
-            override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) = Unit
-        }
         updateZoomPresetSelection()
         val pinchDetector = android.view.ScaleGestureDetector(this, object : android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: android.view.ScaleGestureDetector): Boolean {
@@ -316,24 +300,26 @@ class MainActivity : Activity() {
 
     private fun updatePreviewTransform() {
         if (!::preview.isInitialized || !preview.isAvailable) return
-        val vw = preview.width.toFloat()
-        val vh = preview.height.toFloat()
-        if (vw <= 0f || vh <= 0f) return
+        val viewWidth = preview.width.toFloat()
+        val viewHeight = preview.height.toFloat()
+        if (viewWidth <= 0f || viewHeight <= 0f) return
         val sensor = if (cameraId.isNotEmpty()) runCatching { sensorOrientation() }.getOrDefault(90) else 90
         val display = displayRotationDegrees()
         val rotation = ((if (frontCamera) sensor + display else sensor - display) % 360 + 360) % 360
         val swapped = rotation == 90 || rotation == 270
-        val bw = if (swapped) previewSize.height.toFloat() else previewSize.width.toFloat()
-        val bh = if (swapped) previewSize.width.toFloat() else previewSize.height.toFloat()
-        val viewRect = android.graphics.RectF(0f, 0f, vw, vh)
-        val bufferRect = android.graphics.RectF(0f, 0f, bw, bh)
+        val viewRect = android.graphics.RectF(0f, 0f, viewWidth, viewHeight)
+        val bufferRect = if (swapped) android.graphics.RectF(0f, 0f, previewSize.height.toFloat(), previewSize.width.toFloat())
+            else android.graphics.RectF(0f, 0f, previewSize.width.toFloat(), previewSize.height.toFloat())
         bufferRect.offset(viewRect.centerX() - bufferRect.centerX(), viewRect.centerY() - bufferRect.centerY())
         val matrix = Matrix()
         matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL)
-        val fill = maxOf(vw / bw, vh / bh)
+        val scale = maxOf(viewHeight / bufferRect.height(), viewWidth / bufferRect.width())
+        matrix.postScale(scale, scale, viewRect.centerX(), viewRect.centerY())
+        val rotationDegrees = when (rotation) { 90 -> -90f; 180 -> 180f; 270 -> 90f; else -> 0f }
+        if (rotationDegrees != 0f) matrix.postRotate(rotationDegrees, viewRect.centerX(), viewRect.centerY())
         val nativeZoom = zoom.coerceAtMost(maxZoom).coerceAtLeast(1f)
-        matrix.postScale(fill * (zoom / nativeZoom).coerceAtLeast(1f), fill * (zoom / nativeZoom).coerceAtLeast(1f), viewRect.centerX(), viewRect.centerY())
-        matrix.postRotate(rotation.toFloat(), viewRect.centerX(), viewRect.centerY())
+        val softwareZoom = (zoom / nativeZoom).coerceAtLeast(1f)
+        if (softwareZoom > 1f) matrix.postScale(softwareZoom, softwareZoom, viewRect.centerX(), viewRect.centerY())
         preview.setTransform(matrix)
     }
 
@@ -398,7 +384,6 @@ class MainActivity : Activity() {
                     selectedVideoQuality = "1080p30"; aspectRatio = "3:4"
                     zoomSlider.progress = 0; zoomValue.text = "1.0x"; timerButton.text = "OFF"
                     qualityButton.text = if (selectedMode == "VIDEO") selectedVideoQualityLabel() else aspectRatio
-                    framingMiniContainer.visibility = View.GONE
                     zoom = 1f
                     updatePreviewTransform()
                     applyAspectRatio(false)
@@ -510,26 +495,12 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun updateFramingMiniMap() = Unit
+    private fun updateFramingMiniMap() {
+        if (::zoomGuideMap.isInitialized) zoomGuideMap.setZoomRatio(zoom)
+    }
 
     private fun setFramingVisible(visible: Boolean) {
-        if (!::framingMiniContainer.isInitialized) return
-        if (visible) {
-            if (framingMiniContainer.visibility != View.VISIBLE) {
-                framingMiniContainer.visibility = View.VISIBLE
-                framingMiniContainer.alpha = 0f
-                framingMiniContainer.scaleX = 0.88f
-                framingMiniContainer.scaleY = 0.88f
-                framingMiniContainer.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(190).start()
-            }
-        } else if (!visible && framingMiniContainer.visibility == View.VISIBLE) {
-            framingMiniContainer.animate().alpha(0f).scaleX(0.9f).scaleY(0.9f).setDuration(150).withEndAction {
-                framingMiniContainer.visibility = View.GONE
-                framingMiniContainer.alpha = 1f
-                framingMiniContainer.scaleX = 1f
-                framingMiniContainer.scaleY = 1f
-            }.start()
-        }
+        if (::zoomGuideMap.isInitialized) zoomGuideMap.setZoomRatio(if (visible) zoom.coerceAtLeast(5f) else 1f)
     }
 
     private val textureListener = object : TextureView.SurfaceTextureListener {
@@ -583,13 +554,11 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun createPreviewSession(includeOverview: Boolean = true) {
+    private fun createPreviewSession() {
         val device = cameraDevice ?: return
         closeCameraSession()
         runCatching { previewSurface?.release() }
         previewSurface = null
-        runCatching { overviewSurface?.release() }
-        overviewSurface = null
         try {
             val texture = preview.surfaceTexture ?: return
             texture.setDefaultBufferSize(previewSize.width, previewSize.height)
@@ -616,12 +585,7 @@ class MainActivity : Activity() {
                     runOnUiThread { setStatus("Photo save failed") }
                 }
             }, cameraHandler)
-            val overviewTexture = if (includeOverview && ::overviewPreview.isInitialized && overviewPreview.isAvailable) overviewPreview.surfaceTexture else null
-            if (overviewTexture != null) {
-                overviewTexture.setDefaultBufferSize(640, 480)
-                overviewSurface = Surface(overviewTexture)
-            }
-            val surfaces = listOfNotNull(previewSurface, overviewSurface, imageReader?.surface)
+            val surfaces = listOfNotNull(previewSurface, imageReader?.surface)
             device.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(configured: CameraCaptureSession) {
                     session = configured
@@ -634,14 +598,8 @@ class MainActivity : Activity() {
                 }
                 override fun onConfigureFailed(failed: CameraCaptureSession) {
                     runOnUiThread {
-                        if (includeOverview && overviewSurface != null) {
-                            runCatching { overviewSurface?.release() }
-                            overviewSurface = null
-                            createPreviewSession(false)
-                        } else {
-                            setFramingVisible(false)
-                            setStatus("Camera preview configuration failed: Camera2 rejected preview outputs")
-                        }
+                        setFramingVisible(false)
+                        setStatus("Camera preview configuration failed: Camera2 rejected preview and JPEG outputs")
                     }
                 }
             }, cameraHandler)
@@ -668,28 +626,11 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun buildOverviewRequest(): CaptureRequest? {
-        val device = cameraDevice ?: return null
-        val surface = overviewSurface ?: return null
-        return runCatching {
-            device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                addTarget(surface)
-                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-                set(CaptureRequest.FLASH_MODE, if (flashMode == "TORCH" && !frontCamera) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF)
-                activeArray?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
-            }.build()
-        }.getOrNull()
-    }
-
     private fun updateRepeatingRequest() {
         val activeSession = session ?: return
         val request = buildPreviewRequest() ?: return
         try {
-            val overviewRequest = buildOverviewRequest()
-            if (overviewRequest != null) activeSession.setRepeatingBurst(listOf(request, overviewRequest), null, cameraHandler)
-            else activeSession.setRepeatingRequest(request, null, cameraHandler)
+            activeSession.setRepeatingRequest(request, null, cameraHandler)
         } catch (e: Exception) {
             setStatus("Camera control failed: ${e.message ?: e.javaClass.simpleName}")
         }
@@ -878,8 +819,6 @@ class MainActivity : Activity() {
         closeCameraSession()
         runCatching { previewSurface?.release() }
         previewSurface = null
-        runCatching { overviewSurface?.release() }; overviewSurface = null
-        framingMiniContainer.visibility = View.GONE
         texture.setDefaultBufferSize(previewSize.width, previewSize.height)
         val previewOut = Surface(texture)
         previewSurface = previewOut
@@ -1024,8 +963,6 @@ class MainActivity : Activity() {
         closeCameraSession()
         runCatching { previewSurface?.release() }
         previewSurface = null
-        runCatching { overviewSurface?.release() }
-        overviewSurface = null
         runCatching { cameraDevice?.close() }
         cameraDevice = null
         runCatching { imageReader?.close() }
