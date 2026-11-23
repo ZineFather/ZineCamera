@@ -398,7 +398,7 @@ class MainActivity : Activity() {
                 setStatus("4K60 rejected; falling back to 1080p30")
                 runCatching { media.reset() }
                 configureRecorder(media, recorderDescriptor!!.fileDescriptor, 1920, 1080, 30)
-                createRecordingSession(device, texture, media)
+                createRecordingSession(device, texture, media, false)
             }
         } catch (e: Exception) {
             cleanupFailedRecording()
