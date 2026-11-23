@@ -57,7 +57,8 @@ class MainActivity : Activity() {
     private lateinit var shutter: View
     private lateinit var recordIndicator: TextView
     private lateinit var settingsButton: TextView
-    private lateinit var framingMiniMap: ZoomFramingMiniMap
+    private lateinit var overviewPreview: TextureView
+    private var overviewSurface: Surface? = null
     private lateinit var framingMiniContainer: FrameLayout
     private lateinit var topBarContainer: View
     private lateinit var bottomControlsContainer: View
@@ -146,10 +147,23 @@ class MainActivity : Activity() {
         recordIndicator = findViewById(R.id.recordIndicator)
         settingsButton = findViewById(R.id.settingsButton)
         framingMiniContainer = findViewById(R.id.framingMiniContainer)
-        framingMiniMap = findViewById(R.id.framingMiniOverlay)
+        overviewPreview = findViewById(R.id.zoomOverviewPreview)
         topBarContainer = findViewById(R.id.topBarContainer)
         bottomControlsContainer = findViewById(R.id.bottomControlsContainer)
-        framingMiniContainer.visibility = View.INVISIBLE
+        framingMiniContainer.visibility = View.GONE
+        overviewPreview.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
+                surface.setDefaultBufferSize(640, 480)
+                if (cameraDevice != null) createPreviewSession()
+            }
+            override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
+            override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean {
+                runCatching { overviewSurface?.release() }
+                overviewSurface = null
+                return true
+            }
+            override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) = Unit
+        }
         updateZoomPresetSelection()
         val pinchDetector = android.view.ScaleGestureDetector(this, object : android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: android.view.ScaleGestureDetector): Boolean {
@@ -266,15 +280,29 @@ class MainActivity : Activity() {
     private fun applyAspectRatio(animate: Boolean) {
         if (!::previewContainer.isInitialized || !::preview.isInitialized) return
         previewContainer.post {
-            if (previewContainer.width <= 0 || previewContainer.height <= 0) return@post
-            // Keep the live view edge-to-edge. The selected ratio is applied to the
-            // captured JPEG crop, not by shrinking the TextureView and exposing
-            // a large empty black region around the preview.
-            val params = preview.layoutParams as FrameLayout.LayoutParams
-            params.width = FrameLayout.LayoutParams.MATCH_PARENT
-            params.height = FrameLayout.LayoutParams.MATCH_PARENT
-            params.gravity = android.view.Gravity.CENTER
-            preview.layoutParams = params
+            val cw = previewContainer.width
+            val ch = previewContainer.height
+            if (cw <= 0 || ch <= 0) return@post
+            val ratio = when (aspectRatio) {
+                "3:4" -> 3f / 4f
+                "9:16" -> 9f / 16f
+                "1:1" -> 1f
+                else -> 0f
+            }
+            val target = if (cw > ch && ratio > 0f) 1f / ratio else ratio
+            val lp = preview.layoutParams as FrameLayout.LayoutParams
+            if (target == 0f) {
+                lp.width = FrameLayout.LayoutParams.MATCH_PARENT
+                lp.height = FrameLayout.LayoutParams.MATCH_PARENT
+            } else if (cw.toFloat() / ch > target) {
+                lp.height = ch
+                lp.width = (ch * target).roundToInt()
+            } else {
+                lp.width = cw
+                lp.height = (cw / target).roundToInt()
+            }
+            lp.gravity = android.view.Gravity.CENTER
+            preview.layoutParams = lp
             preview.post { updatePreviewTransform() }
         }
     }
@@ -288,57 +316,25 @@ class MainActivity : Activity() {
 
     private fun updatePreviewTransform() {
         if (!::preview.isInitialized || !preview.isAvailable) return
-
-        val viewWidth = preview.width.toFloat()
-        val viewHeight = preview.height.toFloat()
-        val bufferWidth = previewSize.width.toFloat()
-        val bufferHeight = previewSize.height.toFloat()
-        if (viewWidth <= 0f || viewHeight <= 0f || bufferWidth <= 0f || bufferHeight <= 0f) return
-
+        val vw = preview.width.toFloat()
+        val vh = preview.height.toFloat()
+        if (vw <= 0f || vh <= 0f) return
         val sensor = if (cameraId.isNotEmpty()) runCatching { sensorOrientation() }.getOrDefault(90) else 90
         val display = displayRotationDegrees()
         val rotation = ((if (frontCamera) sensor + display else sensor - display) % 360 + 360) % 360
-        val rotatedWidth = if (rotation == 90 || rotation == 270) bufferHeight else bufferWidth
-        val rotatedHeight = if (rotation == 90 || rotation == 270) bufferWidth else bufferHeight
-
-        // Build the complete buffer-to-view transform in one matrix. This avoids
-        // TextureView post-transform ordering errors that offset the image and
-        // leave a large black band above the live preview.
-        val fillScale = maxOf(viewWidth / rotatedWidth, viewHeight / rotatedHeight)
+        val swapped = rotation == 90 || rotation == 270
+        val bw = if (swapped) previewSize.height.toFloat() else previewSize.width.toFloat()
+        val bh = if (swapped) previewSize.width.toFloat() else previewSize.height.toFloat()
+        val viewRect = android.graphics.RectF(0f, 0f, vw, vh)
+        val bufferRect = android.graphics.RectF(0f, 0f, bw, bh)
+        bufferRect.offset(viewRect.centerX() - bufferRect.centerX(), viewRect.centerY() - bufferRect.centerY())
+        val matrix = Matrix()
+        matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL)
+        val fill = maxOf(vw / bw, vh / bh)
         val nativeZoom = zoom.coerceAtMost(maxZoom).coerceAtLeast(1f)
-        val softwareZoom = (zoom / nativeZoom).coerceAtLeast(1f)
-        val scale = fillScale * softwareZoom
-        val tx: Float
-        val ty: Float
-        val a: Float
-        val b: Float
-        val c: Float
-        val d: Float
-        when (rotation) {
-            90 -> {
-                a = 0f; b = scale; c = -scale; d = 0f
-                tx = viewWidth / 2f + bufferHeight * scale / 2f
-                ty = viewHeight / 2f - bufferWidth * scale / 2f
-            }
-            180 -> {
-                a = -scale; b = 0f; c = 0f; d = -scale
-                tx = viewWidth / 2f + bufferWidth * scale / 2f
-                ty = viewHeight / 2f + bufferHeight * scale / 2f
-            }
-            270 -> {
-                a = 0f; b = -scale; c = scale; d = 0f
-                tx = viewWidth / 2f - bufferHeight * scale / 2f
-                ty = viewHeight / 2f + bufferWidth * scale / 2f
-            }
-            else -> {
-                a = scale; b = 0f; c = 0f; d = scale
-                tx = viewWidth / 2f - bufferWidth * scale / 2f
-                ty = viewHeight / 2f - bufferHeight * scale / 2f
-            }
-        }
-        val transform = Matrix()
-        transform.setValues(floatArrayOf(a, c, tx, b, d, ty, 0f, 0f, 1f))
-        preview.setTransform(transform)
+        matrix.postScale(fill * (zoom / nativeZoom).coerceAtLeast(1f), fill * (zoom / nativeZoom).coerceAtLeast(1f), viewRect.centerX(), viewRect.centerY())
+        matrix.postRotate(rotation.toFloat(), viewRect.centerX(), viewRect.centerY())
+        preview.setTransform(matrix)
     }
 
     private fun jpegOrientation(): Int {
@@ -514,18 +510,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun updateFramingMiniMap() {
-        if (!::framingMiniMap.isInitialized) return
-        val array = activeArray
-        val crop = cropRegion()
-        val centerX = if (array != null && crop != null && array.width() > 0) {
-            (crop.centerX() - array.left).toFloat() / array.width().toFloat()
-        } else 0.5f
-        val centerY = if (array != null && crop != null && array.height() > 0) {
-            (crop.centerY() - array.top).toFloat() / array.height().toFloat()
-        } else 0.5f
-        framingMiniMap.setZoom(zoom, maxZoom, centerX, centerY)
-    }
+    private fun updateFramingMiniMap() = Unit
 
     private fun setFramingVisible(visible: Boolean) {
         if (!::framingMiniContainer.isInitialized) return
@@ -557,7 +542,7 @@ class MainActivity : Activity() {
     }
 
     private fun startCameraThread() {
-        cameraThread = HandlerThread("ZineCamera2").also { it.start() }
+        cameraThread = HandlerThread("ZoneCamera2").also { it.start() }
         cameraHandler = Handler(cameraThread!!.looper)
     }
 
@@ -598,11 +583,13 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun createPreviewSession() {
+    private fun createPreviewSession(includeOverview: Boolean = true) {
         val device = cameraDevice ?: return
         closeCameraSession()
         runCatching { previewSurface?.release() }
         previewSurface = null
+        runCatching { overviewSurface?.release() }
+        overviewSurface = null
         try {
             val texture = preview.surfaceTexture ?: return
             texture.setDefaultBufferSize(previewSize.width, previewSize.height)
@@ -629,7 +616,12 @@ class MainActivity : Activity() {
                     runOnUiThread { setStatus("Photo save failed") }
                 }
             }, cameraHandler)
-            val surfaces = listOfNotNull(previewSurface, imageReader?.surface)
+            val overviewTexture = if (includeOverview && ::overviewPreview.isInitialized && overviewPreview.isAvailable) overviewPreview.surfaceTexture else null
+            if (overviewTexture != null) {
+                overviewTexture.setDefaultBufferSize(640, 480)
+                overviewSurface = Surface(overviewTexture)
+            }
+            val surfaces = listOfNotNull(previewSurface, overviewSurface, imageReader?.surface)
             device.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(configured: CameraCaptureSession) {
                     session = configured
@@ -642,8 +634,14 @@ class MainActivity : Activity() {
                 }
                 override fun onConfigureFailed(failed: CameraCaptureSession) {
                     runOnUiThread {
-                        setFramingVisible(false)
-                        setStatus("Camera preview configuration failed: HAL rejected preview + JPEG outputs")
+                        if (includeOverview && overviewSurface != null) {
+                            runCatching { overviewSurface?.release() }
+                            overviewSurface = null
+                            createPreviewSession(false)
+                        } else {
+                            setFramingVisible(false)
+                            setStatus("Camera preview configuration failed: Camera2 rejected preview outputs")
+                        }
                     }
                 }
             }, cameraHandler)
@@ -670,11 +668,28 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun buildOverviewRequest(): CaptureRequest? {
+        val device = cameraDevice ?: return null
+        val surface = overviewSurface ?: return null
+        return runCatching {
+            device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                addTarget(surface)
+                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                set(CaptureRequest.FLASH_MODE, if (flashMode == "TORCH" && !frontCamera) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF)
+                activeArray?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
+            }.build()
+        }.getOrNull()
+    }
+
     private fun updateRepeatingRequest() {
         val activeSession = session ?: return
         val request = buildPreviewRequest() ?: return
         try {
-            activeSession.setRepeatingRequest(request, null, cameraHandler)
+            val overviewRequest = buildOverviewRequest()
+            if (overviewRequest != null) activeSession.setRepeatingBurst(listOf(request, overviewRequest), null, cameraHandler)
+            else activeSession.setRepeatingRequest(request, null, cameraHandler)
         } catch (e: Exception) {
             setStatus("Camera control failed: ${e.message ?: e.javaClass.simpleName}")
         }
@@ -817,7 +832,7 @@ class MainActivity : Activity() {
                     setStatus("Cannot start ${quality.label}: ${e.message ?: e.javaClass.simpleName}")
                 }
             }
-        }, "ZineRecorderSetup").start()
+        }, "ZoneRecorderSetup").start()
     }
 
     private fun supportedFpsRange(fps: Int): android.util.Range<Int>? {
@@ -863,6 +878,8 @@ class MainActivity : Activity() {
         closeCameraSession()
         runCatching { previewSurface?.release() }
         previewSurface = null
+        runCatching { overviewSurface?.release() }; overviewSurface = null
+        framingMiniContainer.visibility = View.GONE
         texture.setDefaultBufferSize(previewSize.width, previewSize.height)
         val previewOut = Surface(texture)
         previewSurface = previewOut
@@ -1007,6 +1024,8 @@ class MainActivity : Activity() {
         closeCameraSession()
         runCatching { previewSurface?.release() }
         previewSurface = null
+        runCatching { overviewSurface?.release() }
+        overviewSurface = null
         runCatching { cameraDevice?.close() }
         cameraDevice = null
         runCatching { imageReader?.close() }
