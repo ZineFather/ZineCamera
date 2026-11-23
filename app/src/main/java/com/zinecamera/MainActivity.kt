@@ -714,7 +714,7 @@ class MainActivity : Activity() {
         texture.setDefaultBufferSize(1920, 1080)
         val previewOut = Surface(texture)
         val recorderOut = media.surface
-        device.createCaptureSession(listOf(previewOut, recorderOut), object : CameraCaptureSession.StateCallback() {
+        device.createCaptureSession(listOfNotNull(previewOut, recorderOut, miniPreviewSurface), object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(configured: CameraCaptureSession) {
                 session = configured
                 try {
@@ -733,7 +733,9 @@ class MainActivity : Activity() {
                         set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
                         cropRegion()?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
                     }.build()
-                    configured.setRepeatingRequest(request, null, cameraHandler)
+                    val wideRequest = buildMiniPreviewRequest()
+                    if (wideRequest != null) configured.setRepeatingBurst(listOf(request, wideRequest), null, cameraHandler)
+                    else configured.setRepeatingRequest(request, null, cameraHandler)
                     media.start()
                     recording = true
                     runOnUiThread {
