@@ -236,7 +236,7 @@ class MainActivity : Activity() {
             activeArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
             maxZoom = (chars.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f).coerceAtLeast(1f)
             val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            val sizes = map?.getOutputSizes(SurfaceTexture::class.java).orEmpty()
+            val sizes = map?.getOutputSizes(android.graphics.SurfaceTexture::class.java).orEmpty()
             previewSize = sizes.firstOrNull { it.width <= 1920 && it.height <= 1080 } ?: sizes.firstOrNull() ?: android.util.Size(1280, 720)
             preview.surfaceTexture?.setDefaultBufferSize(previewSize.width, previewSize.height)
             cameraManager.openCamera(cameraId, cameraCallback, cameraHandler)
@@ -387,7 +387,7 @@ class MainActivity : Activity() {
                 ?: throw IllegalStateException("Cannot create video file")
             recorderDescriptor = contentResolver.openFileDescriptor(recordingUri!!, "w")
                 ?: throw IllegalStateException("Cannot open video file")
-            val media = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else @Suppress("DEPRECATION") MediaRecorder()
+            val media = newMediaRecorder()
             recorder = media
             val wants4k60 = force4k60
             try {
@@ -406,7 +406,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun configureRecorder(media: MediaRecorder, fd: FileDescriptor, width: Int, height: Int, fps: Int) {
+    @Suppress("DEPRECATION")\n    private fun newMediaRecorder(): MediaRecorder =\n        if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else MediaRecorder()\n\n    private fun configureRecorder(media: MediaRecorder, fd: FileDescriptor, width: Int, height: Int, fps: Int) {
         media.reset()
         media.setAudioSource(MediaRecorder.AudioSource.MIC)
         media.setVideoSource(MediaRecorder.VideoSource.SURFACE)
@@ -506,7 +506,7 @@ class MainActivity : Activity() {
     }
 
     private fun stamp() = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-    private fun setStatus(message: String) { if (::status.isInitialized) status.text = message }
+    private fun setStatus(message: String) { if (::status.isInitialized) runOnUiThread { status.text = message } }
 
     private fun closeCamera() {
         closeCameraSession()
