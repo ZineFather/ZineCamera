@@ -61,6 +61,7 @@ class MainActivity : Activity() {
     private lateinit var topBarContainer: View
     private lateinit var bottomControlsContainer: View
     private var miniPreviewSurface: Surface? = null
+    private var retryWithoutMiniPreview = false
     private var flashMode = "OFF"
     private var aspectRatio = "3:4"
 
@@ -402,7 +403,7 @@ class MainActivity : Activity() {
 
     private fun setFramingVisible(visible: Boolean) {
         if (!::framingMiniContainer.isInitialized) return
-        if (visible && miniPreview.isAvailable && miniPreviewSurface != null) {
+        if (visible && !retryWithoutMiniPreview && miniPreview.isAvailable && miniPreviewSurface != null) {
             if (framingMiniContainer.visibility != View.VISIBLE) {
                 framingMiniContainer.visibility = View.VISIBLE
                 framingMiniContainer.alpha = 0f
@@ -463,6 +464,7 @@ class MainActivity : Activity() {
 
     private fun openCamera() {
         if (!hasPermissions() || !preview.isAvailable || isFinishing) return
+        retryWithoutMiniPreview = false
         try {
             val ids = cameraManager.cameraIdList
             cameraId = ids.firstOrNull { id ->
@@ -513,7 +515,7 @@ class MainActivity : Activity() {
             }, cameraHandler)
             miniPreviewSurface?.release()
             miniPreviewSurface = if (miniPreview.isAvailable) Surface(miniPreview.surfaceTexture) else null
-            val surfaces = listOfNotNull(previewSurface, miniPreviewSurface, imageReader?.surface)
+            val surfaces = listOfNotNull(previewSurface, if (retryWithoutMiniPreview) null else miniPreviewSurface, imageReader?.surface)
             device.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(configured: CameraCaptureSession) {
                     session = configured
@@ -521,8 +523,17 @@ class MainActivity : Activity() {
                     runOnUiThread { setFramingVisible(zoom >= 4f) }
                 }
                 override fun onConfigureFailed(failed: CameraCaptureSession) {
-                    runOnUiThread { setFramingVisible(false) }
-                    setStatus("Preview configuration failed (wide preview stream may be unsupported)")
+                    if (miniPreviewSurface != null && !retryWithoutMiniPreview) {
+                        retryWithoutMiniPreview = true
+                        runOnUiThread {
+                            setFramingVisible(false)
+                            setStatus("Wide preview stream unsupported; continuing with the main camera preview")
+                        }
+                        cameraHandler?.post { createPreviewSession() }
+                    } else {
+                        runOnUiThread { setFramingVisible(false) }
+                        setStatus("Camera preview configuration failed")
+                    }
                 }
             }, cameraHandler)
         } catch (e: Exception) {
@@ -550,6 +561,7 @@ class MainActivity : Activity() {
 
     private fun buildMiniPreviewRequest(): CaptureRequest? {
         val device = cameraDevice ?: return null
+        if (retryWithoutMiniPreview) return null
         val surface = miniPreviewSurface ?: return null
         return try {
             device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
@@ -744,7 +756,7 @@ class MainActivity : Activity() {
         texture.setDefaultBufferSize(1920, 1080)
         val previewOut = Surface(texture)
         val recorderOut = media.surface
-        device.createCaptureSession(listOfNotNull(previewOut, recorderOut, miniPreviewSurface), object : CameraCaptureSession.StateCallback() {
+        device.createCaptureSession(listOfNotNull(previewOut, recorderOut, if (retryWithoutMiniPreview) null else miniPreviewSurface), object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(configured: CameraCaptureSession) {
                 session = configured
                 try {
