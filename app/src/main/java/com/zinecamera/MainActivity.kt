@@ -8,7 +8,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Matrix
 import android.graphics.Rect
-import android.graphics.RectF
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
@@ -59,12 +58,9 @@ class MainActivity : Activity() {
     private lateinit var recordIndicator: TextView
     private lateinit var settingsButton: TextView
     private lateinit var framingMiniMap: ZoomFramingMiniMap
-    private lateinit var miniPreview: TextureView
     private lateinit var framingMiniContainer: FrameLayout
     private lateinit var topBarContainer: View
     private lateinit var bottomControlsContainer: View
-    private var miniPreviewSurface: Surface? = null
-    private var retryWithoutMiniPreview = false
     private var flashMode = "OFF"
     private var aspectRatio = "3:4"
 
@@ -149,17 +145,22 @@ class MainActivity : Activity() {
         shutter = findViewById(R.id.shutterButton)
         recordIndicator = findViewById(R.id.recordIndicator)
         settingsButton = findViewById(R.id.settingsButton)
-        miniPreview = findViewById(R.id.framingMiniPreview)
         framingMiniContainer = findViewById(R.id.framingMiniContainer)
         framingMiniMap = findViewById(R.id.framingMiniOverlay)
         topBarContainer = findViewById(R.id.topBarContainer)
         bottomControlsContainer = findViewById(R.id.bottomControlsContainer)
         framingMiniContainer.visibility = View.INVISIBLE
-        miniPreview.surfaceTextureListener = miniTextureListener
         updateZoomPresetSelection()
-        if (miniPreview.isAvailable) miniPreview.surfaceTexture?.let {
-            miniTextureListener.onSurfaceTextureAvailable(it, miniPreview.width, miniPreview.height)
-        }
+        val pinchDetector = android.view.ScaleGestureDetector(this, object : android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: android.view.ScaleGestureDetector): Boolean {
+                val limit = if (experimental1000x) 1000f else 100f
+                zoom = (zoom * detector.scaleFactor).coerceIn(1f, limit)
+                syncZoomControls()
+                applyZoom()
+                return true
+            }
+        })
+        preview.setOnTouchListener { _, event -> pinchDetector.onTouchEvent(event); true }
     }
 
     private fun wireControls() {
@@ -178,7 +179,7 @@ class MainActivity : Activity() {
                 val limit = if (experimental1000x) 1000f else 100f
                 val fraction = progress.toFloat() / zoomSlider.max.coerceAtLeast(1)
                 zoom = 1f + (limit - 1f) * fraction.pow(2.35f)
-                zoomValue.text = String.format(Locale.US, "%.1fx", zoom)
+                syncZoomControls()
                 updateFramingMiniMap()
                 setFramingVisible(zoom >= 8f)
                 updateZoomPresetSelection()
@@ -308,22 +309,50 @@ class MainActivity : Activity() {
         if (!::preview.isInitialized || !preview.isAvailable) return
         val viewWidth = preview.width.toFloat()
         val viewHeight = preview.height.toFloat()
-        if (viewWidth <= 0f || viewHeight <= 0f || previewSize.width <= 0 || previewSize.height <= 0) return
+        val bufferWidth = previewSize.width.toFloat()
+        val bufferHeight = previewSize.height.toFloat()
+        if (viewWidth <= 0f || viewHeight <= 0f || bufferWidth <= 0f || bufferHeight <= 0f) return
 
         val sensor = if (cameraId.isNotEmpty()) runCatching { sensorOrientation() }.getOrDefault(0) else 0
         val display = displayRotationDegrees()
         val rotation = if (frontCamera) (sensor + display) % 360 else (sensor - display + 360) % 360
-        val centerX = previewSize.width / 2f
-        val centerY = previewSize.height / 2f
-        val matrix = Matrix()
-        matrix.setRotate(rotation.toFloat(), centerX, centerY)
-
-        val rotatedBounds = RectF(0f, 0f, previewSize.width.toFloat(), previewSize.height.toFloat())
-        matrix.mapRect(rotatedBounds)
-        val scale = maxOf(viewWidth / rotatedBounds.width(), viewHeight / rotatedBounds.height())
-        matrix.postScale(scale, scale, centerX, centerY)
-        matrix.postTranslate(viewWidth / 2f - centerX, viewHeight / 2f - centerY)
-        preview.setTransform(matrix)
+        val normalizedRotation = ((rotation % 360) + 360) % 360
+        val swapped = normalizedRotation == 90 || normalizedRotation == 270
+        val rotatedWidth = if (swapped) bufferHeight else bufferWidth
+        val rotatedHeight = if (swapped) bufferWidth else bufferHeight
+        val fillScale = maxOf(viewWidth / rotatedWidth, viewHeight / rotatedHeight)
+        val nativeZoom = zoom.coerceAtMost(maxZoom).coerceAtLeast(1f)
+        val softwareZoom = (zoom / nativeZoom).coerceAtLeast(1f)
+        val scale = fillScale * softwareZoom
+        val matrixValues = FloatArray(9)
+        when (normalizedRotation) {
+            90 -> {
+                matrixValues[0] = 0f; matrixValues[1] = -scale
+                matrixValues[2] = (viewWidth + bufferHeight * scale) / 2f
+                matrixValues[3] = scale; matrixValues[4] = 0f
+                matrixValues[5] = (viewHeight - bufferWidth * scale) / 2f
+            }
+            180 -> {
+                matrixValues[0] = -scale; matrixValues[1] = 0f
+                matrixValues[2] = (viewWidth + bufferWidth * scale) / 2f
+                matrixValues[3] = 0f; matrixValues[4] = -scale
+                matrixValues[5] = (viewHeight + bufferHeight * scale) / 2f
+            }
+            270 -> {
+                matrixValues[0] = 0f; matrixValues[1] = scale
+                matrixValues[2] = (viewWidth - bufferHeight * scale) / 2f
+                matrixValues[3] = -scale; matrixValues[4] = 0f
+                matrixValues[5] = (viewHeight + bufferWidth * scale) / 2f
+            }
+            else -> {
+                matrixValues[0] = scale; matrixValues[1] = 0f
+                matrixValues[2] = (viewWidth - bufferWidth * scale) / 2f
+                matrixValues[3] = 0f; matrixValues[4] = scale
+                matrixValues[5] = (viewHeight - bufferHeight * scale) / 2f
+            }
+        }
+        matrixValues[6] = 0f; matrixValues[7] = 0f; matrixValues[8] = 1f
+        preview.setTransform(Matrix().apply { setValues(matrixValues) })
     }
 
     private fun selectedVideoQualityLabel(): String = when (selectedVideoQuality) {
@@ -379,7 +408,8 @@ class MainActivity : Activity() {
                     zoomSlider.progress = 0; zoomValue.text = "1.0x"; timerButton.text = "OFF"
                     qualityButton.text = if (selectedMode == "VIDEO") selectedVideoQualityLabel() else aspectRatio
                     framingMiniMap.visibility = View.GONE
-                    preview.scaleX = 1f; preview.scaleY = 1f
+                    zoom = 1f
+                    updatePreviewTransform()
                     applyAspectRatio(false)
                     updateRepeatingRequest(); setStatus("Camera defaults restored")
                 }
@@ -451,13 +481,23 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun syncZoomControls() {
+        zoomValue.text = String.format(Locale.US, "%.1fx", zoom)
+        val limit = if (experimental1000x) 1000f else 100f
+        val fraction = ((zoom - 1f) / (limit - 1f)).coerceIn(0f, 1f).pow(1f / 2.35f)
+        zoomSlider.progress = (fraction * zoomSlider.max).roundToInt()
+        updateZoomPresetSelection()
+    }
+
     private fun setZoomPreset(value: Float, source: View) {
         val limit = if (experimental1000x) 1000f else 100f
         zoom = value.coerceIn(1f, limit)
         val fraction = ((zoom - 1f) / (limit - 1f)).coerceIn(0f, 1f).pow(1f / 2.35f)
         zoomSlider.progress = (fraction * zoomSlider.max).roundToInt()
         zoomValue.text = String.format(Locale.US, "%.1fx", zoom)
-        updateZoomPresetSelection()
+        syncZoomControls()
+        updateFramingMiniMap()
+        setFramingVisible(zoom >= 8f)
         source.animate().scaleX(1.13f).scaleY(1.13f).setDuration(90).withEndAction {
             source.animate().scaleX(1f).scaleY(1f).setDuration(130).start()
         }.start()
@@ -494,7 +534,7 @@ class MainActivity : Activity() {
 
     private fun setFramingVisible(visible: Boolean) {
         if (!::framingMiniContainer.isInitialized) return
-        if (visible && !retryWithoutMiniPreview && miniPreviewSurface != null) {
+        if (visible) {
             if (framingMiniContainer.visibility != View.VISIBLE) {
                 framingMiniContainer.visibility = View.VISIBLE
                 framingMiniContainer.alpha = 0f
@@ -510,27 +550,6 @@ class MainActivity : Activity() {
                 framingMiniContainer.scaleY = 1f
             }.start()
         }
-    }
-
-    private val miniTextureListener = object : TextureView.SurfaceTextureListener {
-        override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
-            surface.setDefaultBufferSize(previewSize.width, previewSize.height)
-            miniPreviewSurface?.release()
-            miniPreviewSurface = Surface(surface)
-            if (cameraDevice != null) createPreviewSession()
-        }
-        override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
-            surface.setDefaultBufferSize(previewSize.width, previewSize.height)
-        }
-        override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean {
-            closeCameraSession()
-            miniPreviewSurface?.release()
-            miniPreviewSurface = null
-            setFramingVisible(false)
-            preview.post { if (cameraDevice != null) createPreviewSession() }
-            return true
-        }
-        override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) = Unit
     }
 
     private val textureListener = object : TextureView.SurfaceTextureListener {
@@ -559,7 +578,6 @@ class MainActivity : Activity() {
 
     private fun openCamera() {
         if (!hasPermissions() || !preview.isAvailable || isFinishing) return
-        retryWithoutMiniPreview = false
         try {
             val ids = cameraManager.cameraIdList
             cameraId = ids.firstOrNull { id ->
@@ -571,9 +589,12 @@ class MainActivity : Activity() {
             maxZoom = (chars.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f).coerceAtLeast(1f)
             val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             val sizes = map?.getOutputSizes(android.graphics.SurfaceTexture::class.java).orEmpty()
-            previewSize = sizes.firstOrNull { it.width <= 1920 && it.height <= 1080 } ?: sizes.firstOrNull() ?: android.util.Size(1280, 720)
+            val portraitFriendly = sizes.filter { it.width >= it.height && it.width <= 1920 && it.height <= 1440 }
+            previewSize = portraitFriendly.maxByOrNull { it.width.toLong() * it.height.toLong() }
+                ?: sizes.filter { it.width >= it.height }.maxByOrNull { it.width.toLong() * it.height.toLong() }
+                ?: sizes.firstOrNull()
+                ?: android.util.Size(1440, 1080)
             preview.surfaceTexture?.setDefaultBufferSize(previewSize.width, previewSize.height)
-            miniPreview.surfaceTexture?.setDefaultBufferSize(previewSize.width, previewSize.height)
             preview.post { applyAspectRatio(false); updatePreviewTransform() }
             cameraManager.openCamera(cameraId, cameraCallback, cameraHandler)
             setStatus("Camera ready")
@@ -610,26 +631,21 @@ class MainActivity : Activity() {
                     runOnUiThread { setStatus("Photo save failed") }
                 }
             }, cameraHandler)
-            miniPreviewSurface?.release()
-            miniPreviewSurface = if (miniPreview.isAvailable) Surface(miniPreview.surfaceTexture) else null
-            val surfaces = listOfNotNull(previewSurface, if (retryWithoutMiniPreview) null else miniPreviewSurface, imageReader?.surface)
+            val surfaces = listOfNotNull(previewSurface, imageReader?.surface)
             device.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(configured: CameraCaptureSession) {
                     session = configured
                     updateRepeatingRequest()
-                    runOnUiThread { setFramingVisible(zoom >= 8f) }
+                    runOnUiThread {
+                        updateFramingMiniMap()
+                        setFramingVisible(zoom >= 8f)
+                        setStatus("Camera preview ready")
+                    }
                 }
                 override fun onConfigureFailed(failed: CameraCaptureSession) {
-                    if (miniPreviewSurface != null && !retryWithoutMiniPreview) {
-                        retryWithoutMiniPreview = true
-                        runOnUiThread {
-                            setFramingVisible(false)
-                            setStatus("Wide preview stream unsupported; continuing with the main camera preview")
-                        }
-                        cameraHandler?.post { createPreviewSession() }
-                    } else {
-                        runOnUiThread { setFramingVisible(false) }
-                        setStatus("Camera preview configuration failed")
+                    runOnUiThread {
+                        setFramingVisible(false)
+                        setStatus("Camera preview configuration failed: HAL rejected preview + JPEG outputs")
                     }
                 }
             }, cameraHandler)
@@ -656,28 +672,11 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun buildMiniPreviewRequest(): CaptureRequest? {
-        val device = cameraDevice ?: return null
-        if (retryWithoutMiniPreview) return null
-        val surface = miniPreviewSurface ?: return null
-        return try {
-            device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                addTarget(surface)
-                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-                set(CaptureRequest.FLASH_MODE, if (flashMode == "TORCH" && !frontCamera) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF)
-            }.build()
-        } catch (e: Exception) { null }
-    }
-
     private fun updateRepeatingRequest() {
         val activeSession = session ?: return
         val request = buildPreviewRequest() ?: return
         try {
-            val wideRequest = buildMiniPreviewRequest()
-            if (wideRequest != null) activeSession.setRepeatingBurst(listOf(request, wideRequest), null, cameraHandler)
-            else activeSession.setRepeatingRequest(request, null, cameraHandler)
+            activeSession.setRepeatingRequest(request, null, cameraHandler)
         } catch (e: Exception) {
             try { activeSession.setRepeatingRequest(request, null, cameraHandler) }
             catch (fallback: Exception) { setStatus("Camera control failed: ${fallback.message ?: e.message}") }
@@ -728,8 +727,6 @@ class MainActivity : Activity() {
     private fun applyZoom() {
         val nativeZoom = zoom.coerceAtMost(maxZoom)
         val extra = (zoom / nativeZoom).coerceAtLeast(1f)
-        preview.scaleX = extra.coerceAtMost(100f)
-        preview.scaleY = extra.coerceAtMost(100f)
         updateFramingMiniMap()
         setFramingVisible(zoom >= 8f)
         updateRepeatingRequest()
@@ -792,19 +789,13 @@ class MainActivity : Activity() {
                     .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                     ?.getOutputSizes(MediaRecorder::class.java).orEmpty()
                 val isForced4k60 = selectedVideoQuality == "4K60"
-                val fpsRange = if (isForced4k60) {
-                    cameraManager.getCameraCharacteristics(cameraId)
-                        .get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
-                        ?.firstOrNull { it.lower == 60 && it.upper == 60 }
-                } else supportedFpsRange(quality.fps)
                 val sizeSupported = supportedSizes.any { it.width == quality.width && it.height == quality.height }
-                if (isForced4k60 && !sizeSupported) throw IllegalStateException("Camera2 does not advertise 3840x2160 MediaRecorder output")
-                val requestedSupported = sizeSupported && (fpsRange != null || isForced4k60)
-                val actualQuality = if (requestedSupported) quality else videoQualities[1]
-                if (!requestedSupported) runOnUiThread {
-                    qualityButton.text = "FHD · 30"
-                    setStatus("${quality.label} unsupported by Camera2; selected FHD30")
+                if (isForced4k60) {
+                    runOnUiThread { setStatus("Force attempt: configuring 3840x2160 at 60 FPS; device may reject it") }
+                } else if (!sizeSupported) {
+                    throw IllegalStateException("${quality.width}x${quality.height} is not advertised for MediaRecorder")
                 }
+                val actualQuality = quality
                 val values = ContentValues().apply {
                     put(MediaStore.Video.Media.DISPLAY_NAME, "Zine_${stamp()}.mp4")
                     put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
@@ -877,7 +868,7 @@ class MainActivity : Activity() {
         texture.setDefaultBufferSize(1920, 1080)
         val previewOut = Surface(texture)
         val recorderOut = media.surface
-        device.createCaptureSession(listOfNotNull(previewOut, recorderOut, if (retryWithoutMiniPreview) null else miniPreviewSurface), object : CameraCaptureSession.StateCallback() {
+        device.createCaptureSession(listOf(previewOut, recorderOut), object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(configured: CameraCaptureSession) {
                 session = configured
                 try {
@@ -890,17 +881,13 @@ class MainActivity : Activity() {
                             .get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES).orEmpty()
                         val fpsRange = if (quality.width == 3840 && quality.fps == 60) {
                             availableRanges.firstOrNull { it.lower == 60 && it.upper == 60 }
-                                ?: availableRanges.filter { it.upper >= 60 }.maxByOrNull { it.upper }
-                                ?: availableRanges.maxByOrNull { it.upper }
-                                ?: throw IllegalStateException("Camera2 exposes no AE FPS ranges")
+                                ?: throw IllegalStateException("Camera2 does not expose a fixed 60 FPS AE range")
                         } else supportedFpsRange(quality.fps)
                             ?: throw IllegalStateException("No compatible ${quality.fps} FPS range")
                         set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
                         cropRegion()?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
                     }.build()
-                    val wideRequest = buildMiniPreviewRequest()
-                    if (wideRequest != null) configured.setRepeatingBurst(listOf(request, wideRequest), null, cameraHandler)
-                    else configured.setRepeatingRequest(request, null, cameraHandler)
+                    configured.setRepeatingRequest(request, null, cameraHandler)
                     media.start()
                     recording = true
                     runOnUiThread {
@@ -910,32 +897,15 @@ class MainActivity : Activity() {
                     }
                 } catch (e: Exception) {
                     if (quality.width == 3840 && quality.fps == 60) {
-                        val retryStarted = runCatching {
-                            val ranges = cameraManager.getCameraCharacteristics(cameraId)
-                                .get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES).orEmpty()
-                            val fallbackRange = ranges.filter { it.upper >= 60 }.maxByOrNull { it.upper }
-                                ?: ranges.maxByOrNull { it.upper }
-                                ?: throw IllegalStateException("No fallback AE FPS range")
-                            val retryRequest = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
-                                addTarget(previewOut)
-                                addTarget(recorderOut)
-                                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
-                                set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fallbackRange)
-                                cropRegion()?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
-                            }.build()
-                            configured.setRepeatingRequest(retryRequest, null, cameraHandler)
-                            media.start()
-                            recording = true
-                        }.isSuccess
-                        if (retryStarted) {
-                            runOnUiThread {
-                                shutter.isEnabled = true
-                                recordIndicator.text = "● RECORDING"
-                                setStatus("Recording 4K · MediaRecorder 60 FPS request; Camera2 fallback AE range")
-                            }
-                            return
+                        runOnUiThread {
+                            cleanupFailedRecording()
+                            shutter.isEnabled = true
+                            setStatus("Force 4K60 failed: Camera2 rejected 3840x2160 @ 60 FPS (${e.message ?: e.javaClass.simpleName})")
+                            createPreviewSession()
                         }
+                        runCatching { media.reset() }
+                        closeCameraSession()
+                        return
                     }
                     runOnUiThread {
                         cleanupFailedRecording()
@@ -948,11 +918,11 @@ class MainActivity : Activity() {
                 }
             }
             override fun onConfigureFailed(failed: CameraCaptureSession) {
-                if (!allowFallback) {
+                if (!allowFallback || (quality.width == 3840 && quality.fps == 60)) {
                     runOnUiThread {
                         cleanupFailedRecording()
                         shutter.isEnabled = true
-                        setStatus("Force 4K60 Camera2 session rejected (onConfigureFailed). No downgrade; retry or choose another mode.")
+                        setStatus("Force 4K60 failed: Camera2 rejected the 3840x2160 @ 60 FPS session. No downgrade was applied.")
                         createPreviewSession()
                     }
                 } else if (allowFallback && recorderDescriptor != null) {
@@ -1034,8 +1004,6 @@ class MainActivity : Activity() {
         closeCameraSession()
         runCatching { previewSurface?.release() }
         previewSurface = null
-        runCatching { miniPreviewSurface?.release() }
-        miniPreviewSurface = null
         runCatching { cameraDevice?.close() }
         cameraDevice = null
         runCatching { imageReader?.close() }
