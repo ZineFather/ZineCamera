@@ -6,7 +6,9 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Matrix
 import android.graphics.Rect
+import android.graphics.RectF
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
@@ -178,7 +180,7 @@ class MainActivity : Activity() {
                 zoom = 1f + (limit - 1f) * fraction.pow(2.35f)
                 zoomValue.text = String.format(Locale.US, "%.1fx", zoom)
                 framingMiniMap.setZoom(zoom, maxZoom)
-                setFramingVisible(zoom >= 4f)
+                setFramingVisible(zoom >= 8f)
                 updateZoomPresetSelection()
                 applyZoom()
             }
@@ -266,16 +268,19 @@ class MainActivity : Activity() {
             val availableWidth = previewContainer.width
             val availableHeight = previewContainer.height
             if (availableWidth <= 0 || availableHeight <= 0) return@post
+            val availableRatio = availableWidth.toFloat() / availableHeight.toFloat()
             val target = when (aspectRatio) {
                 "3:4" -> 3f / 4f
                 "9:16" -> 9f / 16f
                 "1:1" -> 1f
-                else -> previewSize.width.toFloat() / previewSize.height.toFloat()
+                else -> availableRatio
             }
-            val availableRatio = availableWidth.toFloat() / availableHeight
             val width: Int
             val height: Int
-            if (target > availableRatio) {
+            if (aspectRatio == "Full") {
+                width = availableWidth
+                height = availableHeight
+            } else if (target > availableRatio) {
                 width = availableWidth
                 height = (availableWidth / target).roundToInt()
             } else {
@@ -288,9 +293,37 @@ class MainActivity : Activity() {
             params.gravity = android.view.Gravity.CENTER
             if (animate) TransitionManager.beginDelayedTransition(previewContainer, android.transition.ChangeBounds().apply { duration = 220 })
             preview.layoutParams = params
-            preview.scaleX = 1f
-            preview.scaleY = 1f
+            preview.post { updatePreviewTransform() }
         }
+    }
+
+    private fun displayRotationDegrees(): Int = when (windowManager.defaultDisplay.rotation) {
+        Surface.ROTATION_90 -> 90
+        Surface.ROTATION_180 -> 180
+        Surface.ROTATION_270 -> 270
+        else -> 0
+    }
+
+    private fun updatePreviewTransform() {
+        if (!::preview.isInitialized || !preview.isAvailable) return
+        val viewWidth = preview.width.toFloat()
+        val viewHeight = preview.height.toFloat()
+        if (viewWidth <= 0f || viewHeight <= 0f || previewSize.width <= 0 || previewSize.height <= 0) return
+
+        val sensor = if (cameraId.isNotEmpty()) runCatching { sensorOrientation() }.getOrDefault(0) else 0
+        val display = displayRotationDegrees()
+        val rotation = if (frontCamera) (sensor + display) % 360 else (sensor - display + 360) % 360
+        val centerX = previewSize.width / 2f
+        val centerY = previewSize.height / 2f
+        val matrix = Matrix()
+        matrix.setRotate(rotation.toFloat(), centerX, centerY)
+
+        val rotatedBounds = RectF(0f, 0f, previewSize.width.toFloat(), previewSize.height.toFloat())
+        matrix.mapRect(rotatedBounds)
+        val scale = maxOf(viewWidth / rotatedBounds.width(), viewHeight / rotatedBounds.height())
+        matrix.postScale(scale, scale, centerX, centerY)
+        matrix.postTranslate(viewWidth / 2f - centerX, viewHeight / 2f - centerY)
+        preview.setTransform(matrix)
     }
 
     private fun selectedVideoQualityLabel(): String = when (selectedVideoQuality) {
@@ -347,6 +380,7 @@ class MainActivity : Activity() {
                     qualityButton.text = if (selectedMode == "VIDEO") selectedVideoQualityLabel() else aspectRatio
                     framingMiniMap.visibility = View.GONE
                     preview.scaleX = 1f; preview.scaleY = 1f
+                    applyAspectRatio(false)
                     updateRepeatingRequest(); setStatus("Camera defaults restored")
                 }
             }
@@ -472,7 +506,9 @@ class MainActivity : Activity() {
             miniPreviewSurface = Surface(surface)
             if (cameraDevice != null) createPreviewSession()
         }
-        override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
+        override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
+            surface.setDefaultBufferSize(previewSize.width, previewSize.height)
+        }
         override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean {
             closeCameraSession()
             miniPreviewSurface?.release()
@@ -486,7 +522,9 @@ class MainActivity : Activity() {
 
     private val textureListener = object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = openCamera()
-        override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
+        override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
+            preview.post { updatePreviewTransform() }
+        }
         override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean = true
         override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) = Unit
     }
@@ -522,6 +560,8 @@ class MainActivity : Activity() {
             val sizes = map?.getOutputSizes(android.graphics.SurfaceTexture::class.java).orEmpty()
             previewSize = sizes.firstOrNull { it.width <= 1920 && it.height <= 1080 } ?: sizes.firstOrNull() ?: android.util.Size(1280, 720)
             preview.surfaceTexture?.setDefaultBufferSize(previewSize.width, previewSize.height)
+            miniPreview.surfaceTexture?.setDefaultBufferSize(previewSize.width, previewSize.height)
+            preview.post { applyAspectRatio(false); updatePreviewTransform() }
             cameraManager.openCamera(cameraId, cameraCallback, cameraHandler)
             setStatus("Camera ready")
         } catch (e: Exception) {
@@ -564,7 +604,7 @@ class MainActivity : Activity() {
                 override fun onConfigured(configured: CameraCaptureSession) {
                     session = configured
                     updateRepeatingRequest()
-                    runOnUiThread { setFramingVisible(zoom >= 4f) }
+                    runOnUiThread { setFramingVisible(zoom >= 8f) }
                 }
                 override fun onConfigureFailed(failed: CameraCaptureSession) {
                     if (miniPreviewSurface != null && !retryWithoutMiniPreview) {
@@ -652,7 +692,12 @@ class MainActivity : Activity() {
             "3:4" -> 3f / 4f
             "9:16" -> 9f / 16f
             "1:1" -> 1f
-            else -> return base
+            else -> {
+                val width = preview.width.takeIf { it > 0 } ?: previewContainer.width
+                val height = preview.height.takeIf { it > 0 } ?: previewContainer.height
+                if (width > 0 && height > 0) width.toFloat() / height.toFloat()
+                else base.width().toFloat() / base.height().toFloat()
+            }
         }
         val ratio = if (sensorOrientation() % 180 == 90) 1f / displayRatio else displayRatio
         val currentRatio = base.width().toFloat() / base.height().toFloat()
@@ -673,7 +718,7 @@ class MainActivity : Activity() {
         preview.scaleX = extra.coerceAtMost(100f)
         preview.scaleY = extra.coerceAtMost(100f)
         framingMiniMap.setZoom(zoom, maxZoom)
-        setFramingVisible(zoom >= 4f)
+        setFramingVisible(zoom >= 8f)
         updateRepeatingRequest()
         if (zoom > maxZoom) setStatus("Digital zoom • native limit ${String.format(Locale.US, "%.1f", maxZoom)}x")
     }
