@@ -678,8 +678,7 @@ class MainActivity : Activity() {
         try {
             activeSession.setRepeatingRequest(request, null, cameraHandler)
         } catch (e: Exception) {
-            try { activeSession.setRepeatingRequest(request, null, cameraHandler) }
-            catch (fallback: Exception) { setStatus("Camera control failed: ${fallback.message ?: e.message}") }
+            setStatus("Camera control failed: ${e.message ?: e.javaClass.simpleName}")
         }
     }
 
@@ -725,12 +724,13 @@ class MainActivity : Activity() {
     }
 
     private fun applyZoom() {
-        val nativeZoom = zoom.coerceAtMost(maxZoom)
-        val extra = (zoom / nativeZoom).coerceAtLeast(1f)
+        updatePreviewTransform()
         updateFramingMiniMap()
         setFramingVisible(zoom >= 8f)
         updateRepeatingRequest()
-        if (zoom > maxZoom) setStatus("Digital zoom • native limit ${String.format(Locale.US, "%.1f", maxZoom)}x")
+        if (zoom > maxZoom) {
+            setStatus("Digital preview zoom • native limit ${String.format(Locale.US, "%.1f", maxZoom)}x")
+        }
     }
 
     private fun takePhoto() {
@@ -922,7 +922,11 @@ class MainActivity : Activity() {
                     runOnUiThread {
                         cleanupFailedRecording()
                         shutter.isEnabled = true
-                        setStatus("Force 4K60 failed: Camera2 rejected the 3840x2160 @ 60 FPS session. No downgrade was applied.")
+                        setStatus(if (quality.width == 3840 && quality.fps == 60) {
+                        "Force 4K60 failed: Camera2 rejected the 3840x2160 @ 60 FPS session. No downgrade was applied."
+                    } else {
+                        "Video session rejected by Camera2 for ${quality.label}"
+                    })
                         createPreviewSession()
                     }
                 } else if (allowFallback && recorderDescriptor != null) {
