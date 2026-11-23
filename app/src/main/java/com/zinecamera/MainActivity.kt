@@ -315,7 +315,7 @@ class MainActivity : Activity() {
         matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL)
         val scale = maxOf(viewHeight / bufferRect.height(), viewWidth / bufferRect.width())
         matrix.postScale(scale, scale, viewRect.centerX(), viewRect.centerY())
-        val rotationDegrees = when (rotation) { 90 -> -90f; 180 -> 180f; 270 -> 90f; else -> 0f }
+        val rotationDegrees = when (rotation) { 90 -> 90f; 180 -> 180f; 270 -> -90f; else -> 0f }
         if (rotationDegrees != 0f) matrix.postRotate(rotationDegrees, viewRect.centerX(), viewRect.centerY())
         val nativeZoom = zoom.coerceAtMost(maxZoom).coerceAtLeast(1f)
         val softwareZoom = (zoom / nativeZoom).coerceAtLeast(1f)
@@ -513,7 +513,7 @@ class MainActivity : Activity() {
     }
 
     private fun startCameraThread() {
-        cameraThread = HandlerThread("ZoneCamera2").also { it.start() }
+        cameraThread = HandlerThread("ZoomCamCamera2").also { it.start() }
         cameraHandler = Handler(cameraThread!!.looper)
     }
 
@@ -580,7 +580,7 @@ class MainActivity : Activity() {
                 try {
                     contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
                     photoPendingUri = null
-                    runOnUiThread { setStatus("Photo saved to Pictures/ZoneCamera") }
+                    runOnUiThread { setStatus("Photo saved to Pictures/ZoomCam") }
                 } catch (e: Exception) {
                     runOnUiThread { setStatus("Photo save failed") }
                 }
@@ -693,9 +693,9 @@ class MainActivity : Activity() {
         val readerSurface = imageReader?.surface ?: return
         try {
             val values = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, "Zone_${stamp()}.jpg")
+                put(MediaStore.Images.Media.DISPLAY_NAME, "ZoomCam_${stamp()}.jpg")
                 put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                if (Build.VERSION.SDK_INT >= 29) put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ZoneCamera")
+                if (Build.VERSION.SDK_INT >= 29) put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ZoomCam")
             }
             photoPendingUri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             val request = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
@@ -751,10 +751,10 @@ class MainActivity : Activity() {
                 }
                 val actualQuality = quality
                 val values = ContentValues().apply {
-                    put(MediaStore.Video.Media.DISPLAY_NAME, "Zone_${stamp()}.mp4")
+                    put(MediaStore.Video.Media.DISPLAY_NAME, "ZoomCam_${stamp()}.mp4")
                     put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
                     if (Build.VERSION.SDK_INT >= 29) {
-                        put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/ZoneCamera")
+                        put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/ZoomCam")
                         put(MediaStore.Video.Media.IS_PENDING, 1)
                     }
                 }
@@ -773,7 +773,7 @@ class MainActivity : Activity() {
                     setStatus("Cannot start ${quality.label}: ${e.message ?: e.javaClass.simpleName}")
                 }
             }
-        }, "ZoneRecorderSetup").start()
+        }, "ZoomCamRecorderSetup").start()
     }
 
     private fun supportedFpsRange(fps: Int): android.util.Range<Int>? {
