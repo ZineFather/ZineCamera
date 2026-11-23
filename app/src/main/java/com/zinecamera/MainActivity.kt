@@ -45,6 +45,7 @@ import kotlin.math.pow
 
 class MainActivity : Activity() {
     private lateinit var preview: TextureView
+    private lateinit var previewContainer: FrameLayout
     private lateinit var status: TextView
     private lateinit var zoomValue: TextView
     private lateinit var zoomSlider: SeekBar
@@ -125,6 +126,7 @@ class MainActivity : Activity() {
         startCameraThread()
         wireControls()
         setModeSelection("PHOTO", false)
+        previewContainer.post { applyAspectRatio(false) }
         if (hasPermissions()) {
             if (preview.isAvailable) openCamera() else preview.surfaceTextureListener = textureListener
         } else {
@@ -134,6 +136,7 @@ class MainActivity : Activity() {
 
     private fun bindViews() {
         preview = findViewById(R.id.cameraPreview)
+        previewContainer = findViewById(R.id.previewContainer)
         status = findViewById(R.id.statusText)
         zoomValue = findViewById(R.id.zoomValue)
         zoomSlider = findViewById(R.id.zoomSlider)
@@ -249,11 +252,45 @@ class MainActivity : Activity() {
             menu.setOnMenuItemClickListener { item ->
                 aspectRatio = listOf("3:4", "9:16", "1:1", "Full")[item.itemId]
                 qualityButton.text = aspectRatio
+                applyAspectRatio(true)
                 setStatus("Photo aspect ratio: $aspectRatio")
                 true
             }
         }
         menu.show()
+    }
+
+    private fun applyAspectRatio(animate: Boolean) {
+        if (!::previewContainer.isInitialized || !::preview.isInitialized) return
+        previewContainer.post {
+            val availableWidth = previewContainer.width
+            val availableHeight = previewContainer.height
+            if (availableWidth <= 0 || availableHeight <= 0) return@post
+            val target = when (aspectRatio) {
+                "3:4" -> 3f / 4f
+                "9:16" -> 9f / 16f
+                "1:1" -> 1f
+                else -> previewSize.width.toFloat() / previewSize.height.toFloat()
+            }
+            val availableRatio = availableWidth.toFloat() / availableHeight
+            val width: Int
+            val height: Int
+            if (target > availableRatio) {
+                width = availableWidth
+                height = (availableWidth / target).roundToInt()
+            } else {
+                height = availableHeight
+                width = (availableHeight * target).roundToInt()
+            }
+            val params = preview.layoutParams as FrameLayout.LayoutParams
+            params.width = width.coerceAtLeast(1)
+            params.height = height.coerceAtLeast(1)
+            params.gravity = android.view.Gravity.CENTER
+            if (animate) TransitionManager.beginDelayedTransition(previewContainer, android.transition.ChangeBounds().apply { duration = 220 })
+            preview.layoutParams = params
+            preview.scaleX = 1f
+            preview.scaleY = 1f
+        }
     }
 
     private fun selectedVideoQualityLabel(): String = when (selectedVideoQuality) {
@@ -602,6 +639,26 @@ class MainActivity : Activity() {
         )
     }
 
+    private fun photoCropRegion(): Rect? {
+        val base = cropRegion() ?: activeArray ?: return null
+        val ratio = when (aspectRatio) {
+            "3:4" -> 3f / 4f
+            "9:16" -> 9f / 16f
+            "1:1" -> 1f
+            else -> return base
+        }
+        val currentRatio = base.width().toFloat() / base.height().toFloat()
+        return if (currentRatio > ratio) {
+            val width = (base.height() * ratio).roundToInt().coerceAtLeast(2)
+            val left = base.centerX() - width / 2
+            Rect(left, base.top, left + width, base.bottom)
+        } else {
+            val height = (base.width() / ratio).roundToInt().coerceAtLeast(2)
+            val top = base.centerY() - height / 2
+            Rect(base.left, top, base.right, top + height)
+        }
+    }
+
     private fun applyZoom() {
         val nativeZoom = zoom.coerceAtMost(maxZoom)
         val extra = (zoom / nativeZoom).coerceAtLeast(1f)
@@ -630,7 +687,7 @@ class MainActivity : Activity() {
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
                 set(CaptureRequest.CONTROL_AE_MODE, if (flash && !frontCamera) CaptureRequest.CONTROL_AE_MODE_ON_ALWAYS_FLASH else CaptureRequest.CONTROL_AE_MODE_ON)
                 if (flash && !frontCamera) set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_SINGLE)
-                cropRegion()?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
+                photoCropRegion()?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
                 set(CaptureRequest.JPEG_ORIENTATION, sensorOrientation())
             }.build()
             activeSession.capture(request, object : CameraCaptureSession.CaptureCallback() {
@@ -675,10 +732,8 @@ class MainActivity : Activity() {
                         ?.firstOrNull { it.lower == 60 && it.upper == 60 }
                 } else supportedFpsRange(quality.fps)
                 val sizeSupported = supportedSizes.any { it.width == quality.width && it.height == quality.height }
-                if (isForced4k60 && (!sizeSupported || fpsRange == null)) {
-                    throw IllegalStateException("Force 4K60 unavailable: 3840x2160 supported=$sizeSupported, exact [60,60] FPS supported=${fpsRange != null}. No fallback applied.")
-                }
-                val requestedSupported = sizeSupported && fpsRange != null
+                if (isForced4k60 && !sizeSupported) throw IllegalStateException("Camera2 does not advertise 3840x2160 MediaRecorder output")
+                val requestedSupported = sizeSupported && (fpsRange != null || isForced4k60)
                 val actualQuality = if (requestedSupported) quality else videoQualities[1]
                 if (!requestedSupported) runOnUiThread {
                     qualityButton.text = "FHD · 30"
@@ -765,11 +820,13 @@ class MainActivity : Activity() {
                         addTarget(recorderOut)
                         set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                         set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+                        val availableRanges = cameraManager.getCameraCharacteristics(cameraId)
+                            .get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES).orEmpty()
                         val fpsRange = if (quality.width == 3840 && quality.fps == 60) {
-                            cameraManager.getCameraCharacteristics(cameraId)
-                                .get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
-                                ?.firstOrNull { it.lower == 60 && it.upper == 60 }
-                                ?: throw IllegalStateException("Exact [60,60] FPS range unavailable")
+                            availableRanges.firstOrNull { it.lower == 60 && it.upper == 60 }
+                                ?: availableRanges.filter { it.upper >= 60 }.maxByOrNull { it.upper }
+                                ?: availableRanges.maxByOrNull { it.upper }
+                                ?: throw IllegalStateException("Camera2 exposes no AE FPS ranges")
                         } else supportedFpsRange(quality.fps)
                             ?: throw IllegalStateException("No compatible ${quality.fps} FPS range")
                         set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
