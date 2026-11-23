@@ -297,27 +297,54 @@ class MainActivity : Activity() {
 
         val sensor = if (cameraId.isNotEmpty()) runCatching { sensorOrientation() }.getOrDefault(90) else 90
         val display = displayRotationDegrees()
-        val rotation = if (frontCamera) (sensor + display) % 360 else (sensor - display + 360) % 360
-        val normalizedRotation = ((rotation % 360) + 360) % 360
-        val swapped = normalizedRotation == 90 || normalizedRotation == 270
+        val rotation = ((if (frontCamera) sensor + display else sensor - display) % 360 + 360) % 360
+        val rotatedWidth = if (rotation == 90 || rotation == 270) bufferHeight else bufferWidth
+        val rotatedHeight = if (rotation == 90 || rotation == 270) bufferWidth else bufferHeight
 
-        // TextureView's transform is defined in view coordinates. Rotate the
-        // camera buffer first, then center-crop it to the live viewport.
-        val rotatedWidth = if (swapped) bufferHeight else bufferWidth
-        val rotatedHeight = if (swapped) bufferWidth else bufferHeight
-        val centerX = viewWidth / 2f
-        val centerY = viewHeight / 2f
+        // Build the complete buffer-to-view transform in one matrix. This avoids
+        // TextureView post-transform ordering errors that offset the image and
+        // leave a large black band above the live preview.
         val fillScale = maxOf(viewWidth / rotatedWidth, viewHeight / rotatedHeight)
         val nativeZoom = zoom.coerceAtMost(maxZoom).coerceAtLeast(1f)
         val softwareZoom = (zoom / nativeZoom).coerceAtLeast(1f)
         val scale = fillScale * softwareZoom
+        val tx: Float
+        val ty: Float
+        val a: Float
+        val b: Float
+        val c: Float
+        val d: Float
+        when (rotation) {
+            90 -> {
+                a = 0f; b = scale; c = -scale; d = 0f
+                tx = viewWidth / 2f + bufferHeight * scale / 2f
+                ty = viewHeight / 2f - bufferWidth * scale / 2f
+            }
+            180 -> {
+                a = -scale; b = 0f; c = 0f; d = -scale
+                tx = viewWidth / 2f + bufferWidth * scale / 2f
+                ty = viewHeight / 2f + bufferHeight * scale / 2f
+            }
+            270 -> {
+                a = 0f; b = -scale; c = scale; d = 0f
+                tx = viewWidth / 2f - bufferHeight * scale / 2f
+                ty = viewHeight / 2f + bufferWidth * scale / 2f
+            }
+            else -> {
+                a = scale; b = 0f; c = 0f; d = scale
+                tx = viewWidth / 2f - bufferWidth * scale / 2f
+                ty = viewHeight / 2f - bufferHeight * scale / 2f
+            }
+        }
+        val transform = Matrix()
+        transform.setValues(floatArrayOf(a, c, tx, b, d, ty, 0f, 0f, 1f))
+        preview.setTransform(transform)
+    }
 
-        val matrix = Matrix()
-        matrix.setTranslate(-bufferWidth / 2f, -bufferHeight / 2f)
-        matrix.postRotate(normalizedRotation.toFloat())
-        matrix.postScale(scale, scale)
-        matrix.postTranslate(centerX, centerY)
-        preview.setTransform(matrix)
+    private fun jpegOrientation(): Int {
+        val sensor = sensorOrientation()
+        val device = displayRotationDegrees()
+        return if (frontCamera) (sensor + device) % 360 else (sensor - device + 360) % 360
     }
 
     private fun selectedVideoQualityLabel(): String = when (selectedVideoQuality) {
@@ -597,7 +624,7 @@ class MainActivity : Activity() {
                 try {
                     contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
                     photoPendingUri = null
-                    runOnUiThread { setStatus("Photo saved to Pictures/ZineCamera") }
+                    runOnUiThread { setStatus("Photo saved to Pictures/ZoneCamera") }
                 } catch (e: Exception) {
                     runOnUiThread { setStatus("Photo save failed") }
                 }
@@ -710,9 +737,9 @@ class MainActivity : Activity() {
         val readerSurface = imageReader?.surface ?: return
         try {
             val values = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, "Zine_${stamp()}.jpg")
+                put(MediaStore.Images.Media.DISPLAY_NAME, "Zone_${stamp()}.jpg")
                 put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                if (Build.VERSION.SDK_INT >= 29) put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ZineCamera")
+                if (Build.VERSION.SDK_INT >= 29) put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ZoneCamera")
             }
             photoPendingUri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             val request = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
@@ -722,7 +749,7 @@ class MainActivity : Activity() {
                 set(CaptureRequest.CONTROL_AE_MODE, if (flash && !frontCamera) CaptureRequest.CONTROL_AE_MODE_ON_ALWAYS_FLASH else CaptureRequest.CONTROL_AE_MODE_ON)
                 if (flash && !frontCamera) set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_SINGLE)
                 photoCropRegion()?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
-                set(CaptureRequest.JPEG_ORIENTATION, sensorOrientation())
+                set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation())
             }.build()
             activeSession.capture(request, object : CameraCaptureSession.CaptureCallback() {
                 override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: android.hardware.camera2.TotalCaptureResult) {
@@ -768,10 +795,10 @@ class MainActivity : Activity() {
                 }
                 val actualQuality = quality
                 val values = ContentValues().apply {
-                    put(MediaStore.Video.Media.DISPLAY_NAME, "Zine_${stamp()}.mp4")
+                    put(MediaStore.Video.Media.DISPLAY_NAME, "Zone_${stamp()}.mp4")
                     put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
                     if (Build.VERSION.SDK_INT >= 29) {
-                        put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/ZineCamera")
+                        put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/ZoneCamera")
                         put(MediaStore.Video.Media.IS_PENDING, 1)
                     }
                 }
