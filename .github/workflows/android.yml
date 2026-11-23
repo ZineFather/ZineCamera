@@ -42,7 +42,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APK="app/build/outputs/apk/debug/ZineCamera.apk"
+          APK="app/build/outputs/apk/debug/ZoneCamera.apk"
           cp app/build/outputs/apk/debug/app-debug.apk "$APK"
           test -s "$APK"
           unzip -t "$APK"
@@ -51,8 +51,8 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ZineCamera-APK
-          path: app/build/outputs/apk/debug/ZineCamera.apk
+          name: ZoneCamera-APK
+          path: app/build/outputs/apk/debug/ZoneCamera.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -64,10 +64,10 @@ jobs:
         run: |
           set -euo pipefail
           TAG="v0.1.${GITHUB_RUN_NUMBER}"
-          APK="app/build/outputs/apk/debug/ZineCamera.apk"
-          TITLE="ZineCamera ${TAG}"
+          APK="app/build/outputs/apk/debug/ZoneCamera.apk"
+          TITLE="Zone Camera ${TAG}"
           NOTES="$(cat <<'EOF'
-          ZineCamera Android APK build.
+          Zone Camera Android APK build.
 
           English:
           - Debug APK built from the main branch.
@@ -82,9 +82,9 @@ jobs:
           )"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$APK#ZineCamera.apk" --clobber
+            gh release upload "$TAG" "$APK#ZoneCamera.apk" --clobber
           else
-            gh release create "$TAG" "$APK#ZineCamera.apk" \
+            gh release create "$TAG" "$APK#ZoneCamera.apk" \
               --title "$TITLE" \
               --notes "$NOTES" \
               --target "$GITHUB_SHA"
