@@ -273,7 +273,7 @@ class MainActivity : Activity() {
                 "1:1" -> 1f
                 else -> 0f
             }
-            val target = if (cw > ch && ratio > 0f) 1f / ratio else ratio
+            val target = ratio
             val lp = preview.layoutParams as FrameLayout.LayoutParams
             if (target == 0f) {
                 lp.width = FrameLayout.LayoutParams.MATCH_PARENT
@@ -315,7 +315,9 @@ class MainActivity : Activity() {
         matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL)
         val scale = maxOf(viewHeight / bufferRect.height(), viewWidth / bufferRect.width())
         matrix.postScale(scale, scale, viewRect.centerX(), viewRect.centerY())
-        val rotationDegrees = when (rotation) { 90 -> 90f; 180 -> 180f; 270 -> -90f; else -> 0f }
+        // TextureView's transform maps the camera buffer into display coordinates.
+        // Apply the inverse of the sensor-relative rotation so the preview is upright.
+        val rotationDegrees = when (rotation) { 90 -> -90f; 180 -> 180f; 270 -> 90f; else -> 0f }
         if (rotationDegrees != 0f) matrix.postRotate(rotationDegrees, viewRect.centerX(), viewRect.centerY())
         val nativeZoom = zoom.coerceAtMost(maxZoom).coerceAtLeast(1f)
         val softwareZoom = (zoom / nativeZoom).coerceAtLeast(1f)
