@@ -34,6 +34,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlin.math.pow
 
 class MainActivity : Activity() {
     private lateinit var preview: TextureView
@@ -41,13 +42,21 @@ class MainActivity : Activity() {
     private lateinit var zoomValue: TextView
     private lateinit var zoomSlider: SeekBar
     private lateinit var zoomMode: TextView
-    private lateinit var flashButton: TextView
+    private lateinit var flashButton: ImageView
     private lateinit var timerButton: TextView
-    private lateinit var force4kButton: TextView
     private lateinit var qualityButton: TextView
     private lateinit var shutter: View
     private lateinit var recordIndicator: TextView
 
+    private var selectedVideoQuality = "1080p30"
+    private data class VideoQuality(val label: String, val width: Int, val height: Int, val fps: Int)
+    private val videoQualities = listOf(
+        VideoQuality("720p · 30 FPS",1280,720,30),
+        VideoQuality("1080p · 30 FPS",1920,1080,30),
+        VideoQuality("1080p · 60 FPS",1920,1080,60),
+        VideoQuality("4K · 30 FPS",3840,2160,30),
+        VideoQuality("4K · 60 FPS",3840,2160,60)
+    )
     private val cameraManager by lazy { getSystemService(Context.CAMERA_SERVICE) as CameraManager }
     private var cameraId: String = ""
     private var cameraDevice: CameraDevice? = null
@@ -59,7 +68,6 @@ class MainActivity : Activity() {
     private var recording = false
     private var frontCamera = false
     private var flash = false
-    private var force4k60 = false
     private var experimental1000x = false
     private var timerSeconds = 0
     private var zoom = 1f
@@ -69,10 +77,8 @@ class MainActivity : Activity() {
     private var previewSize = android.util.Size(1920, 1080)
     private var photoPendingUri: android.net.Uri? = null
     private var selectedMode = "PHOTO"
-    private var aspectWide = false
     private var cameraThread: HandlerThread? = null
     private var cameraHandler: Handler? = null
-    private var pendingVideoStart: (() -> Unit)? = null
 
     private val cameraCallback = object : CameraDevice.StateCallback() {
         override fun onOpened(camera: CameraDevice) {
@@ -114,7 +120,6 @@ class MainActivity : Activity() {
         zoomMode = findViewById(R.id.zoomMode)
         flashButton = findViewById(R.id.flashButton)
         timerButton = findViewById(R.id.timerButton)
-        force4kButton = findViewById(R.id.force4kButton)
         qualityButton = findViewById(R.id.qualityButton)
         shutter = findViewById(R.id.shutterButton)
         recordIndicator = findViewById(R.id.recordIndicator)
@@ -131,16 +136,7 @@ class MainActivity : Activity() {
             timerSeconds = when (timerSeconds) { 0 -> 3; 3 -> 10; else -> 0 }
             timerButton.text = if (timerSeconds == 0) "OFF" else "${timerSeconds}s"
         }
-        force4kButton.setOnClickListener {
-            force4k60 = !force4k60
-            force4kButton.alpha = if (force4k60) 1f else 0.55f
-            setStatus(if (force4k60) "Experimental 4K60 attempt enabled" else "4K60 attempt disabled")
-        }
-        qualityButton.setOnClickListener {
-            aspectWide = !aspectWide
-            qualityButton.text = if (aspectWide) "16:9 · UHD" else "4:3 · 12MP"
-            setStatus("Photo aspect preference updated")
-        }
+        qualityButton.setOnClickListener { showVideoQualityMenu() }
         zoomMode.setOnClickListener {
             experimental1000x = !experimental1000x
             zoomSlider.max = if (experimental1000x) 1000 else 700
@@ -151,7 +147,8 @@ class MainActivity : Activity() {
             override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (!fromUser) return
                 val limit = if (experimental1000x) 1000f else 100f
-                zoom = 1f + (limit - 1f) * progress / zoomSlider.max.coerceAtLeast(1)
+                val fraction = progress.toFloat() / zoomSlider.max.coerceAtLeast(1)
+                zoom = 1f + (limit - 1f) * fraction.pow(2.35f)
                 zoomValue.text = String.format(Locale.US, "%.1fx", zoom)
                 applyZoom()
             }
@@ -200,6 +197,19 @@ class MainActivity : Activity() {
                 })
             }
         }
+    }
+
+    private fun showVideoQualityMenu() {
+        val menu = android.widget.PopupMenu(this, qualityButton)
+        videoQualities.forEachIndexed { index, q -> menu.menu.add(0,index,index,q.label) }
+        menu.setOnMenuItemClickListener { item ->
+            val q=videoQualities[item.itemId]
+            selectedVideoQuality=when { q.width==1280 -> "720p30"; q.width==1920 && q.fps==30 -> "1080p30"; q.width==1920 -> "1080p60"; q.fps==30 -> "4K30"; else -> "4K60" }
+            qualityButton.text=q.label.replace(" FPS","")
+            setStatus("Video quality: ${q.label}")
+            true
+        }
+        menu.show()
     }
 
     private val textureListener = object : TextureView.SurfaceTextureListener {
@@ -374,43 +384,76 @@ class MainActivity : Activity() {
     private fun startRecording() {
         val device = cameraDevice ?: return
         val texture = preview.surfaceTexture ?: return
-        try {
-            val values = ContentValues().apply {
-                put(MediaStore.Video.Media.DISPLAY_NAME, "Zine_${stamp()}.mp4")
-                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                if (Build.VERSION.SDK_INT >= 29) {
-                    put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/ZineCamera")
-                    put(MediaStore.Video.Media.IS_PENDING, 1)
+        if (recording || recorder != null) return
+        val quality = videoQualities.firstOrNull { q ->
+            selectedVideoQuality == when {
+                q.width == 1280 -> "720p30"
+                q.width == 1920 && q.fps == 30 -> "1080p30"
+                q.width == 1920 -> "1080p60"
+                q.fps == 30 -> "4K30"
+                else -> "4K60"
+            }
+        } ?: videoQualities[1]
+        setStatus("Preparing ${quality.label}…")
+        shutter.isEnabled = false
+        Thread({
+            try {
+                val supportedSizes = cameraManager.getCameraCharacteristics(cameraId)
+                    .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                    ?.getOutputSizes(MediaRecorder::class.java).orEmpty()
+                if (supportedSizes.none { it.width == quality.width && it.height == quality.height })
+                    throw IllegalStateException("Resolution is not supported by this camera")
+                if (supportedFpsRange(quality.fps) == null)
+                    throw IllegalStateException("${quality.fps} FPS is not reported as supported")
+                val values = ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, "Zine_${stamp()}.mp4")
+                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    if (Build.VERSION.SDK_INT >= 29) {
+                        put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/ZineCamera")
+                        put(MediaStore.Video.Media.IS_PENDING, 1)
+                    }
+                }
+                recordingUri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                    ?: throw IllegalStateException("Cannot create video file")
+                recorderDescriptor = contentResolver.openFileDescriptor(recordingUri!!, "w")
+                    ?: throw IllegalStateException("Cannot open video file")
+                val media = newMediaRecorder()
+                recorder = media
+                configureRecorder(media, recorderDescriptor!!.fileDescriptor, quality)
+                createRecordingSession(device, texture, media, quality)
+            } catch (e: Exception) {
+                runOnUiThread {
+                    cleanupFailedRecording()
+                    shutter.isEnabled = true
+                    setStatus("Cannot start ${quality.label}: ${e.message ?: e.javaClass.simpleName}")
                 }
             }
-            recordingUri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-                ?: throw IllegalStateException("Cannot create video file")
-            recorderDescriptor = contentResolver.openFileDescriptor(recordingUri!!, "w")
-                ?: throw IllegalStateException("Cannot open video file")
-            val media = newMediaRecorder()
-            recorder = media
-            val wants4k60 = force4k60
-            try {
-                configureRecorder(media, recorderDescriptor!!.fileDescriptor, if (wants4k60) 3840 else 1920, if (wants4k60) 2160 else 1080, if (wants4k60) 60 else 30)
-                createRecordingSession(device, texture, media)
-            } catch (e: Exception) {
-                if (!wants4k60) throw e
-                setStatus("4K60 rejected; falling back to 1080p30")
-                runCatching { media.reset() }
-                configureRecorder(media, recorderDescriptor!!.fileDescriptor, 1920, 1080, 30)
-                createRecordingSession(device, texture, media, false)
-            }
-        } catch (e: Exception) {
-            cleanupFailedRecording()
-            setStatus("Video start failed: ${e.message ?: e.javaClass.simpleName}")
+        }, "ZineRecorderSetup").start()
+    }
+
+    private fun supportedFpsRange(fps: Int): android.util.Range<Int>? {
+        val ranges = cameraManager.getCameraCharacteristics(cameraId)
+            .get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES).orEmpty()
+        return ranges.filter { it.lower <= fps && it.upper >= fps }.minByOrNull { it.upper - it.lower }
+    }
+
+    private fun videoOrientationHint(): Int {
+        val sensor = sensorOrientation()
+        val rotation = when (windowManager.defaultDisplay.rotation) {
+            Surface.ROTATION_90 -> 90
+            Surface.ROTATION_180 -> 180
+            Surface.ROTATION_270 -> 270
+            else -> 0
         }
+        return if (frontCamera) (sensor + rotation) % 360 else (sensor - rotation + 360) % 360
     }
 
     @Suppress("DEPRECATION")
     private fun newMediaRecorder(): MediaRecorder =
         if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else MediaRecorder()
 
-    private fun configureRecorder(media: MediaRecorder, fd: FileDescriptor, width: Int, height: Int, fps: Int) {
+    private fun configureRecorder(media: MediaRecorder, fd: FileDescriptor, quality: VideoQuality) {
+        val width=quality.width; val height=quality.height; val fps=quality.fps
         media.reset()
         media.setAudioSource(MediaRecorder.AudioSource.MIC)
         media.setVideoSource(MediaRecorder.VideoSource.SURFACE)
@@ -420,13 +463,14 @@ class MainActivity : Activity() {
         media.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
         media.setVideoSize(width, height)
         media.setVideoFrameRate(fps)
-        media.setVideoEncodingBitRate(if (width >= 3840) 48_000_000 else 12_000_000)
+        media.setOrientationHint(videoOrientationHint())
+        media.setVideoEncodingBitRate(when { width >= 3840 && fps == 60 -> 65_000_000; width >= 3840 -> 42_000_000; width >= 1920 && fps == 60 -> 24_000_000; width >= 1920 -> 14_000_000; else -> 8_000_000 })
         media.setAudioEncodingBitRate(128_000)
         media.setAudioSamplingRate(48_000)
         media.prepare()
     }
 
-    private fun createRecordingSession(device: CameraDevice, texture: android.graphics.SurfaceTexture, media: MediaRecorder, allowFallback: Boolean = force4k60) {
+    private fun createRecordingSession(device: CameraDevice, texture: android.graphics.SurfaceTexture, media: MediaRecorder, quality: VideoQuality, allowFallback: Boolean = true) {
         closeCameraSession()
         texture.setDefaultBufferSize(1920, 1080)
         val previewOut = Surface(texture)
@@ -440,6 +484,7 @@ class MainActivity : Activity() {
                         addTarget(recorderOut)
                         set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                         set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+                        supportedFpsRange(quality.fps)?.let { set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
                         cropRegion()?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
                     }.build()
                     configured.setRepeatingRequest(request, null, cameraHandler)
@@ -447,7 +492,7 @@ class MainActivity : Activity() {
                     recording = true
                     runOnUiThread {
                         recordIndicator.text = "● RECORDING"
-                        setStatus(if (force4k60) "Attempting 4K60 recording" else "Recording video")
+                        setStatus("Recording ${quality.label}")
                     }
                 } catch (e: Exception) {
                     runOnUiThread { setStatus("Recorder start failed: ${e.message}") }
@@ -460,9 +505,9 @@ class MainActivity : Activity() {
                 if (allowFallback && recorderDescriptor != null) {
                     try {
                         media.reset()
-                        configureRecorder(media, recorderDescriptor!!.fileDescriptor, 1920, 1080, 30)
+                        configureRecorder(media, recorderDescriptor!!.fileDescriptor, videoQualities[1])
                         runOnUiThread { setStatus("4K60 rejected; falling back to 1080p30") }
-                        createRecordingSession(device, texture, media, false)
+                        createRecordingSession(device, texture, media, videoQualities[1], false)
                     } catch (e: Exception) {
                         runOnUiThread {
                             cleanupFailedRecording()
@@ -502,6 +547,7 @@ class MainActivity : Activity() {
             recorder = null
             recordingUri = null
             recordIndicator.text = "TAP TO RECORD"
+            shutter.isEnabled = true
             closeCameraSession()
             createPreviewSession()
         }
@@ -516,6 +562,7 @@ class MainActivity : Activity() {
         recordingUri?.let { contentResolver.delete(it, null, null) }
         recordingUri = null
         recordIndicator.text = "TAP TO RECORD"
+        shutter.isEnabled = true
     }
 
     private fun closeCameraSession() {
