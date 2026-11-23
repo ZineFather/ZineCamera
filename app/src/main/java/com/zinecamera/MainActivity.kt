@@ -179,7 +179,7 @@ class MainActivity : Activity() {
                 zoom = 1f + (limit - 1f) * fraction.pow(2.35f)
                 syncZoomControls()
                 updateFramingMiniMap()
-                setFramingVisible(zoom >= 8f)
+                setFramingVisible(zoom >= 5f)
                 updateZoomPresetSelection()
                 applyZoom()
             }
@@ -473,7 +473,7 @@ class MainActivity : Activity() {
         zoomValue.text = String.format(Locale.US, "%.1fx", zoom)
         syncZoomControls()
         updateFramingMiniMap()
-        setFramingVisible(zoom >= 8f)
+        setFramingVisible(zoom >= 5f)
         source.animate().scaleX(1.13f).scaleY(1.13f).setDuration(90).withEndAction {
             source.animate().scaleX(1f).scaleY(1f).setDuration(130).start()
         }.start()
@@ -500,7 +500,7 @@ class MainActivity : Activity() {
     }
 
     private fun setFramingVisible(visible: Boolean) {
-        if (::zoomGuideMap.isInitialized) zoomGuideMap.setZoomRatio(if (visible) zoom.coerceAtLeast(5f) else 1f)
+        if (::zoomGuideMap.isInitialized) zoomGuideMap.setZoomRatio(if (visible) zoom else 1f)
     }
 
     private val textureListener = object : TextureView.SurfaceTextureListener {
@@ -592,7 +592,7 @@ class MainActivity : Activity() {
                     updateRepeatingRequest()
                     runOnUiThread {
                         updateFramingMiniMap()
-                        setFramingVisible(zoom >= 8f)
+                        setFramingVisible(zoom >= 5f)
                         setStatus("Camera preview ready")
                     }
                 }
@@ -680,7 +680,7 @@ class MainActivity : Activity() {
     private fun applyZoom() {
         updatePreviewTransform()
         updateFramingMiniMap()
-        setFramingVisible(zoom >= 8f)
+        setFramingVisible(zoom >= 5f)
         updateRepeatingRequest()
         if (zoom > maxZoom) {
             setStatus("Digital preview zoom • native limit ${String.format(Locale.US, "%.1f", maxZoom)}x")
