@@ -1,0 +1,8 @@
+<resources>
+    <color name="zine_black">#000000</color>
+    <color name="zine_surface">#17191F</color>
+    <color name="zine_surface_active">#DCE8FF</color>
+    <color name="zine_text">#FFFFFF</color>
+    <color name="zine_muted">#A7ABB5</color>
+    <color name="zine_accent">#A9C7FF</color>
+</resources>
