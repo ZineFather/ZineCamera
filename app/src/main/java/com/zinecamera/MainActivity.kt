@@ -220,16 +220,19 @@ class MainActivity : ComponentActivity() {
             if (Build.VERSION.SDK_INT >= 29) put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/ZineCamera")
         }
         val output = MediaStoreOutputOptions.Builder(contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI).setContentValues(values).build()
-        recording = capture.output.prepareRecording(this, output).withAudioEnabled()
-            .start(ContextCompat.getMainExecutor(this)) { event ->
-                when (event) {
-                    is VideoRecordEvent.Start -> status.text = "Recording • CameraX quality selection"
-                    is VideoRecordEvent.Finalize -> {
-                        status.text = if (event.hasError()) "Recording failed: ${event.error}" else "Video saved"
-                        recording = null
-                    }
+        val pending = capture.output.prepareRecording(this, output)
+        val configured = if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            pending.withAudioEnabled()
+        } else pending
+        recording = configured.start(ContextCompat.getMainExecutor(this)) { event ->
+            when (event) {
+                is VideoRecordEvent.Start -> status.text = "Recording • CameraX quality selection"
+                is VideoRecordEvent.Finalize -> {
+                    status.text = if (event.hasError()) "Recording failed: ${event.error}" else "Video saved"
+                    recording = null
                 }
             }
+        }
     }
 
     override fun onDestroy() {
