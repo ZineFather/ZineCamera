@@ -399,6 +399,9 @@ class MainActivity : Activity() {
                     experimental1000x = !experimental1000x
                     zoomSlider.max = if (experimental1000x) 1000 else 700
                     zoomMode.text = if (experimental1000x) "1000x" else "100x"
+                    if (!experimental1000x && zoom > 100f) zoom = 100f
+                    syncZoomControls()
+                    applyZoom()
                     setStatus(if (experimental1000x) "Experimental zoom enabled" else "Experimental zoom disabled")
                 }
                 1 -> setStatus("Location metadata is not enabled in this build")
@@ -615,7 +618,10 @@ class MainActivity : Activity() {
             val jpegSizes = cameraManager.getCameraCharacteristics(cameraId)
                 .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                 ?.getOutputSizes(android.graphics.ImageFormat.JPEG)
-            val photoSize = jpegSizes?.maxByOrNull { it.width.toLong() * it.height } ?: android.util.Size(1920, 1080)
+            val normalJpegSizes = jpegSizes.orEmpty().filter { it.width.toLong() * it.height.toLong() <= 16_000_000L }
+            val photoSize = normalJpegSizes.maxByOrNull { it.width.toLong() * it.height.toLong() }
+                ?: jpegSizes?.minByOrNull { it.width.toLong() * it.height.toLong() }
+                ?: android.util.Size(1920, 1080)
             imageReader?.close()
             imageReader = ImageReader.newInstance(photoSize.width, photoSize.height, android.graphics.ImageFormat.JPEG, 2)
             imageReader?.setOnImageAvailableListener({ reader ->
