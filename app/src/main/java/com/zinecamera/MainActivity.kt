@@ -494,6 +494,7 @@ class MainActivity : Activity() {
                     media.start()
                     recording = true
                     runOnUiThread {
+                        shutter.isEnabled = true
                         recordIndicator.text = "● RECORDING"
                         setStatus("Recording ${quality.label}")
                     }
