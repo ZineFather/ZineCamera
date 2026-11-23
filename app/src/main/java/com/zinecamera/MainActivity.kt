@@ -23,6 +23,9 @@ import android.provider.MediaStore
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
+import android.view.ViewGroup
+import android.transition.AutoTransition
+import android.transition.TransitionManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.SeekBar
@@ -30,6 +33,9 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import java.io.FileDescriptor
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -50,6 +56,11 @@ class MainActivity : Activity() {
     private lateinit var recordIndicator: TextView
     private lateinit var settingsButton: TextView
     private lateinit var framingMiniMap: ZoomFramingMiniMap
+    private lateinit var miniPreview: TextureView
+    private lateinit var framingMiniContainer: FrameLayout
+    private lateinit var topBarContainer: View
+    private lateinit var bottomControlsContainer: View
+    private var miniPreviewSurface: Surface? = null
     private var flashMode = "OFF"
     private var aspectRatio = "3:4"
 
@@ -104,12 +115,15 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = android.graphics.Color.BLACK
         window.navigationBarColor = android.graphics.Color.BLACK
         setContentView(R.layout.activity_main)
         bindViews()
+        applySystemBarInsets()
         startCameraThread()
         wireControls()
+        setModeSelection("PHOTO", false)
         if (hasPermissions()) {
             if (preview.isAvailable) openCamera() else preview.surfaceTextureListener = textureListener
         } else {
@@ -129,9 +143,13 @@ class MainActivity : Activity() {
         shutter = findViewById(R.id.shutterButton)
         recordIndicator = findViewById(R.id.recordIndicator)
         settingsButton = findViewById(R.id.settingsButton)
-        framingMiniMap = ZoomFramingMiniMap(this)
-        findViewById<FrameLayout>(R.id.previewContainer).addView(framingMiniMap, FrameLayout.LayoutParams(dp(118), dp(142), android.view.Gravity.TOP or android.view.Gravity.END).apply { topMargin = dp(120); marginEnd = dp(12) })
-        framingMiniMap.visibility = View.GONE
+        miniPreview = findViewById(R.id.framingMiniPreview)
+        framingMiniContainer = findViewById(R.id.framingMiniContainer)
+        framingMiniMap = findViewById(R.id.framingMiniOverlay)
+        topBarContainer = findViewById(R.id.topBarContainer)
+        bottomControlsContainer = findViewById(R.id.bottomControlsContainer)
+        framingMiniContainer.visibility = View.GONE
+        miniPreview.surfaceTextureListener = miniTextureListener
     }
 
     private fun wireControls() {
@@ -140,6 +158,10 @@ class MainActivity : Activity() {
         qualityButton.setOnClickListener { showAspectOrVideoMenu() }
         settingsButton.setOnClickListener { showSettingsMenu() }
         zoomMode.setOnClickListener { showZoomLimitMenu() }
+        findViewById<TextView>(R.id.zoomPreset1).setOnClickListener { setZoomPreset(1f, it) }
+        findViewById<TextView>(R.id.zoomPreset2).setOnClickListener { setZoomPreset(2f, it) }
+        findViewById<TextView>(R.id.zoomPreset4).setOnClickListener { setZoomPreset(4f, it) }
+        findViewById<TextView>(R.id.zoomPreset10).setOnClickListener { setZoomPreset(10f, it) }
         zoomSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (!fromUser) return
@@ -148,7 +170,7 @@ class MainActivity : Activity() {
                 zoom = 1f + (limit - 1f) * fraction.pow(2.35f)
                 zoomValue.text = String.format(Locale.US, "%.1fx", zoom)
                 framingMiniMap.setZoom(zoom, maxZoom)
-                framingMiniMap.visibility = if (zoom >= 4f) View.VISIBLE else View.GONE
+                setFramingVisible(zoom >= 4f)
                 applyZoom()
             }
             override fun onStartTrackingTouch(bar: SeekBar?) {}
@@ -180,14 +202,9 @@ class MainActivity : Activity() {
         )
         modes.forEach { (id, mode) ->
             findViewById<TextView>(id).setOnClickListener {
+                if (recording) return@setOnClickListener
                 selectedMode = mode
-                modes.forEach { (otherId, otherMode) ->
-                    val view = findViewById<TextView>(otherId)
-                    view.setBackgroundResource(if (otherMode == mode) R.drawable.bg_active_pill else R.drawable.bg_glass_pill)
-                    view.setTextColor(if (otherMode == mode) 0xFF101318.toInt() else 0xFFA7ABB5.toInt())
-                }
-                recordIndicator.text = if (mode == "VIDEO") "TAP TO RECORD" else "CAPTURE"
-                qualityButton.text = if (mode == "VIDEO") selectedVideoQualityLabel() else aspectRatio
+                setModeSelection(mode, true)
                 setStatus(when (mode) {
                     "PORTRAIT" -> "Portrait mode • depth effect depends on camera support"
                     "NIGHT" -> "Night mode selected"
@@ -317,6 +334,90 @@ class MainActivity : Activity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
 
+    private fun applySystemBarInsets() {
+        ViewCompat.setOnApplyWindowInsetsListener(topBarContainer) { view, insets ->
+            val top = insets.getInsets(WindowInsetsCompat.Type.systemBars()).top
+            view.setPadding(view.paddingLeft, top + dp(6), view.paddingRight, dp(4))
+            insets
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(bottomControlsContainer) { view, insets ->
+            val bottom = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
+            view.setPadding(view.paddingLeft, dp(2), view.paddingRight, bottom + dp(8))
+            insets
+        }
+        ViewCompat.requestApplyInsets(findViewById(R.id.rootCameraLayout))
+    }
+
+    private fun setModeSelection(mode: String, animate: Boolean) {
+        val container = findViewById<ViewGroup>(R.id.modeContainer)
+        if (animate) TransitionManager.beginDelayedTransition(container, AutoTransition().apply { duration = 190 })
+        val modeIds = listOf(
+            R.id.modePhoto to "PHOTO", R.id.modeVideo to "VIDEO",
+            R.id.modePortrait to "PORTRAIT", R.id.modeNight to "NIGHT", R.id.modePro to "PRO"
+        )
+        modeIds.forEach { (id, value) ->
+            val item = findViewById<TextView>(id)
+            item.setBackgroundResource(if (value == mode) R.drawable.bg_active_pill else R.drawable.bg_glass_pill)
+            item.setTextColor(if (value == mode) 0xFF101318.toInt() else 0xFFA7ABB5.toInt())
+            if (animate) item.animate().scaleX(if (value == mode) 1.06f else 1f)
+                .scaleY(if (value == mode) 1.06f else 1f).setDuration(170).start()
+            else { item.scaleX = 1f; item.scaleY = 1f }
+        }
+        qualityButton.text = if (mode == "VIDEO") selectedVideoQualityLabel() else aspectRatio
+        recordIndicator.text = if (mode == "VIDEO") "TAP TO RECORD" else "CAPTURE"
+    }
+
+    private fun setZoomPreset(value: Float, source: View) {
+        val limit = if (experimental1000x) 1000f else 100f
+        zoom = value.coerceIn(1f, limit)
+        val fraction = ((zoom - 1f) / (limit - 1f)).coerceIn(0f, 1f).pow(1f / 2.35f)
+        zoomSlider.progress = (fraction * zoomSlider.max).roundToInt()
+        zoomValue.text = String.format(Locale.US, "%.1fx", zoom)
+        source.animate().scaleX(1.13f).scaleY(1.13f).setDuration(90).withEndAction {
+            source.animate().scaleX(1f).scaleY(1f).setDuration(130).start()
+        }.start()
+        applyZoom()
+    }
+
+    private fun setFramingVisible(visible: Boolean) {
+        if (!::framingMiniContainer.isInitialized) return
+        if (visible && miniPreview.isAvailable && miniPreviewSurface != null) {
+            if (framingMiniContainer.visibility != View.VISIBLE) {
+                framingMiniContainer.visibility = View.VISIBLE
+                framingMiniContainer.alpha = 0f
+                framingMiniContainer.scaleX = 0.88f
+                framingMiniContainer.scaleY = 0.88f
+                framingMiniContainer.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(190).start()
+            }
+        } else if (!visible && framingMiniContainer.visibility == View.VISIBLE) {
+            framingMiniContainer.animate().alpha(0f).scaleX(0.9f).scaleY(0.9f).setDuration(150).withEndAction {
+                framingMiniContainer.visibility = View.GONE
+                framingMiniContainer.alpha = 1f
+                framingMiniContainer.scaleX = 1f
+                framingMiniContainer.scaleY = 1f
+            }.start()
+        }
+    }
+
+    private val miniTextureListener = object : TextureView.SurfaceTextureListener {
+        override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
+            surface.setDefaultBufferSize(previewSize.width, previewSize.height)
+            miniPreviewSurface?.release()
+            miniPreviewSurface = Surface(surface)
+            if (cameraDevice != null) createPreviewSession()
+            if (zoom >= 4f) setFramingVisible(true)
+        }
+        override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
+        override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean {
+            closeCameraSession()
+            miniPreviewSurface?.release()
+            miniPreviewSurface = null
+            if (cameraDevice != null) createPreviewSession()
+            return true
+        }
+        override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) = Unit
+    }
+
     private val textureListener = object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = openCamera()
         override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
@@ -386,7 +487,9 @@ class MainActivity : Activity() {
                     runOnUiThread { setStatus("Photo save failed") }
                 }
             }, cameraHandler)
-            val surfaces = listOfNotNull(previewSurface, imageReader?.surface)
+            miniPreviewSurface?.release()
+            miniPreviewSurface = if (miniPreview.isAvailable) Surface(miniPreview.surfaceTexture) else null
+            val surfaces = listOfNotNull(previewSurface, miniPreviewSurface, imageReader?.surface)
             device.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(configured: CameraCaptureSession) {
                     session = configured
@@ -417,13 +520,30 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun buildMiniPreviewRequest(): CaptureRequest? {
+        val device = cameraDevice ?: return null
+        val surface = miniPreviewSurface ?: return null
+        return try {
+            device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                addTarget(surface)
+                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                set(CaptureRequest.FLASH_MODE, if (flashMode == "TORCH" && !frontCamera) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF)
+            }.build()
+        } catch (e: Exception) { null }
+    }
+
     private fun updateRepeatingRequest() {
         val activeSession = session ?: return
         val request = buildPreviewRequest() ?: return
         try {
-            activeSession.setRepeatingRequest(request, null, cameraHandler)
+            val wideRequest = buildMiniPreviewRequest()
+            if (wideRequest != null) activeSession.setRepeatingBurst(listOf(request, wideRequest), null, cameraHandler)
+            else activeSession.setRepeatingRequest(request, null, cameraHandler)
         } catch (e: Exception) {
-            setStatus("Camera control failed: ${e.message}")
+            try { activeSession.setRepeatingRequest(request, null, cameraHandler) }
+            catch (fallback: Exception) { setStatus("Camera control failed: ${fallback.message ?: e.message}") }
         }
     }
 
@@ -448,7 +568,7 @@ class MainActivity : Activity() {
         preview.scaleX = extra.coerceAtMost(100f)
         preview.scaleY = extra.coerceAtMost(100f)
         framingMiniMap.setZoom(zoom, maxZoom)
-        framingMiniMap.visibility = if (zoom >= 4f) View.VISIBLE else View.GONE
+        setFramingVisible(zoom >= 4f)
         updateRepeatingRequest()
         if (zoom > maxZoom) setStatus("Digital zoom • native limit ${String.format(Locale.US, "%.1f", maxZoom)}x")
     }
