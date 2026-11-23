@@ -185,19 +185,28 @@
         android:paddingTop="2dp"
         android:paddingBottom="8dp">
 
-        <LinearLayout
-            android:id="@+id/modeContainer"
+        <HorizontalScrollView
+            android:id="@+id/modeScrollContainer"
             android:layout_width="match_parent"
-            android:layout_height="42dp"
-            android:gravity="center"
-            android:orientation="horizontal">
+            android:layout_height="46dp"
+            android:fillViewport="true"
+            android:scrollbars="none"
+            android:overScrollMode="never">
 
-            <TextView android:id="@+id/modePhoto" style="@style/ModePill" android:text="PHOTO" />
-            <TextView android:id="@+id/modeVideo" style="@style/ModePill" android:text="VIDEO" />
-            <TextView android:id="@+id/modePortrait" style="@style/ModePill" android:text="PORTRAIT" />
-            <TextView android:id="@+id/modeNight" style="@style/ModePill" android:text="NIGHT" />
-            <TextView android:id="@+id/modePro" style="@style/ModePill" android:text="PRO" />
-        </LinearLayout>
+            <LinearLayout
+                android:id="@+id/modeContainer"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:orientation="horizontal">
+
+                <TextView android:id="@+id/modePhoto" style="@style/ModeSelectorItem" android:text="PHOTO" />
+                <TextView android:id="@+id/modeVideo" style="@style/ModeSelectorItem" android:text="VIDEO" />
+                <TextView android:id="@+id/modePortrait" style="@style/ModeSelectorItem" android:text="PORTRAIT" />
+                <TextView android:id="@+id/modeNight" style="@style/ModeSelectorItem" android:text="NIGHT" />
+                <TextView android:id="@+id/modePro" style="@style/ModeSelectorItem" android:text="PRO" />
+            </LinearLayout>
+        </HorizontalScrollView>
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -232,6 +241,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_gravity="bottom|center_horizontal"
+                    android:layout_marginBottom="5dp"
                     android:text="CAPTURE"
                     android:textColor="@color/zine_muted"
                     android:textSize="9sp" />
