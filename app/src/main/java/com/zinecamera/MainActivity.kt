@@ -23,6 +23,7 @@ import android.provider.MediaStore
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.TextView
@@ -47,6 +48,10 @@ class MainActivity : Activity() {
     private lateinit var qualityButton: TextView
     private lateinit var shutter: View
     private lateinit var recordIndicator: TextView
+    private lateinit var settingsButton: TextView
+    private lateinit var framingMiniMap: ZoomFramingMiniMap
+    private var flashMode = "OFF"
+    private var aspectRatio = "3:4"
 
     private var selectedVideoQuality = "1080p30"
     private data class VideoQuality(val label: String, val width: Int, val height: Int, val fps: Int)
@@ -123,26 +128,18 @@ class MainActivity : Activity() {
         qualityButton = findViewById(R.id.qualityButton)
         shutter = findViewById(R.id.shutterButton)
         recordIndicator = findViewById(R.id.recordIndicator)
+        settingsButton = findViewById(R.id.settingsButton)
+        framingMiniMap = ZoomFramingMiniMap(this)
+        findViewById<FrameLayout>(R.id.previewContainer).addView(framingMiniMap, FrameLayout.LayoutParams(dp(118), dp(142), android.view.Gravity.TOP or android.view.Gravity.END).apply { topMargin = dp(120); marginEnd = dp(12) })
+        framingMiniMap.visibility = View.GONE
     }
 
     private fun wireControls() {
-        flashButton.setOnClickListener {
-            flash = !flash
-            flashButton.alpha = if (flash) 1f else 0.55f
-            updateRepeatingRequest()
-            setStatus(if (flash) "Flash enabled" else "Flash disabled")
-        }
-        timerButton.setOnClickListener {
-            timerSeconds = when (timerSeconds) { 0 -> 3; 3 -> 10; else -> 0 }
-            timerButton.text = if (timerSeconds == 0) "OFF" else "${timerSeconds}s"
-        }
-        qualityButton.setOnClickListener { showVideoQualityMenu() }
-        zoomMode.setOnClickListener {
-            experimental1000x = !experimental1000x
-            zoomSlider.max = if (experimental1000x) 1000 else 700
-            zoomMode.text = if (experimental1000x) "1000x" else "100x"
-            setStatus(if (experimental1000x) "Experimental digital zoom enabled" else "Digital zoom limited to 100x")
-        }
+        flashButton.setOnClickListener { showFlashMenu() }
+        timerButton.setOnClickListener { showTimerMenu() }
+        qualityButton.setOnClickListener { showAspectOrVideoMenu() }
+        settingsButton.setOnClickListener { showSettingsMenu() }
+        zoomMode.setOnClickListener { showZoomLimitMenu() }
         zoomSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (!fromUser) return
@@ -150,6 +147,8 @@ class MainActivity : Activity() {
                 val fraction = progress.toFloat() / zoomSlider.max.coerceAtLeast(1)
                 zoom = 1f + (limit - 1f) * fraction.pow(2.35f)
                 zoomValue.text = String.format(Locale.US, "%.1fx", zoom)
+                framingMiniMap.setZoom(zoom, maxZoom)
+                framingMiniMap.visibility = if (zoom >= 4f) View.VISIBLE else View.GONE
                 applyZoom()
             }
             override fun onStartTrackingTouch(bar: SeekBar?) {}
@@ -188,6 +187,7 @@ class MainActivity : Activity() {
                     view.setTextColor(if (otherMode == mode) 0xFF101318.toInt() else 0xFFA7ABB5.toInt())
                 }
                 recordIndicator.text = if (mode == "VIDEO") "TAP TO RECORD" else "CAPTURE"
+                qualityButton.text = if (mode == "VIDEO") selectedVideoQualityLabel() else aspectRatio
                 setStatus(when (mode) {
                     "PORTRAIT" -> "Portrait mode • depth effect depends on camera support"
                     "NIGHT" -> "Night mode selected"
