@@ -99,7 +99,7 @@
             android:background="@drawable/bg_status"
             android:clipToOutline="true"
             android:elevation="8dp"
-            android:visibility="gone">
+            android:visibility="invisible">
 
             <TextureView
                 android:id="@+id/framingMiniPreview"
