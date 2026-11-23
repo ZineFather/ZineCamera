@@ -179,7 +179,7 @@ class MainActivity : Activity() {
                 val fraction = progress.toFloat() / zoomSlider.max.coerceAtLeast(1)
                 zoom = 1f + (limit - 1f) * fraction.pow(2.35f)
                 zoomValue.text = String.format(Locale.US, "%.1fx", zoom)
-                framingMiniMap.setZoom(zoom, maxZoom)
+                updateFramingMiniMap()
                 setFramingVisible(zoom >= 8f)
                 updateZoomPresetSelection()
                 applyZoom()
@@ -479,6 +479,19 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun updateFramingMiniMap() {
+        if (!::framingMiniMap.isInitialized) return
+        val array = activeArray
+        val crop = cropRegion()
+        val centerX = if (array != null && crop != null && array.width() > 0) {
+            (crop.centerX() - array.left).toFloat() / array.width().toFloat()
+        } else 0.5f
+        val centerY = if (array != null && crop != null && array.height() > 0) {
+            (crop.centerY() - array.top).toFloat() / array.height().toFloat()
+        } else 0.5f
+        framingMiniMap.setZoom(zoom, maxZoom, centerX, centerY)
+    }
+
     private fun setFramingVisible(visible: Boolean) {
         if (!::framingMiniContainer.isInitialized) return
         if (visible && !retryWithoutMiniPreview && miniPreviewSurface != null) {
@@ -717,7 +730,7 @@ class MainActivity : Activity() {
         val extra = (zoom / nativeZoom).coerceAtLeast(1f)
         preview.scaleX = extra.coerceAtMost(100f)
         preview.scaleY = extra.coerceAtMost(100f)
-        framingMiniMap.setZoom(zoom, maxZoom)
+        updateFramingMiniMap()
         setFramingVisible(zoom >= 8f)
         updateRepeatingRequest()
         if (zoom > maxZoom) setStatus("Digital zoom • native limit ${String.format(Locale.US, "%.1f", maxZoom)}x")
