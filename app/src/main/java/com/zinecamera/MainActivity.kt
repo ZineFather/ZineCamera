@@ -398,7 +398,7 @@ class MainActivity : Activity() {
                     selectedVideoQuality = "1080p30"; aspectRatio = "3:4"
                     zoomSlider.progress = 0; zoomValue.text = "1.0x"; timerButton.text = "OFF"
                     qualityButton.text = if (selectedMode == "VIDEO") selectedVideoQualityLabel() else aspectRatio
-                    framingMiniMap.visibility = View.GONE
+                    framingMiniContainer.visibility = View.GONE
                     zoom = 1f
                     updatePreviewTransform()
                     applyAspectRatio(false)
