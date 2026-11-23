@@ -63,9 +63,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG="v0.1.${GITHUB_RUN_NUMBER}"
+          TAG="v2.0.0"
           APK="app/build/outputs/apk/debug/ZoneCamera.apk"
-          TITLE="Zone Camera ${TAG}"
+          TITLE="Zone Camera 2.0.0"
           NOTES="$(cat <<'EOF'
           Zone Camera Android APK build.
 
