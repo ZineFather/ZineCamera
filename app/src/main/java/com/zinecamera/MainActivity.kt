@@ -150,6 +150,7 @@ class MainActivity : Activity() {
         bottomControlsContainer = findViewById(R.id.bottomControlsContainer)
         framingMiniContainer.visibility = View.GONE
         miniPreview.surfaceTextureListener = miniTextureListener
+        updateZoomPresetSelection()
         if (miniPreview.isAvailable) miniPreview.surfaceTexture?.let {
             miniTextureListener.onSurfaceTextureAvailable(it, miniPreview.width, miniPreview.height)
         }
@@ -174,6 +175,7 @@ class MainActivity : Activity() {
                 zoomValue.text = String.format(Locale.US, "%.1fx", zoom)
                 framingMiniMap.setZoom(zoom, maxZoom)
                 setFramingVisible(zoom >= 4f)
+                updateZoomPresetSelection()
                 applyZoom()
             }
             override fun onStartTrackingTouch(bar: SeekBar?) {}
@@ -376,10 +378,26 @@ class MainActivity : Activity() {
         val fraction = ((zoom - 1f) / (limit - 1f)).coerceIn(0f, 1f).pow(1f / 2.35f)
         zoomSlider.progress = (fraction * zoomSlider.max).roundToInt()
         zoomValue.text = String.format(Locale.US, "%.1fx", zoom)
+        updateZoomPresetSelection()
         source.animate().scaleX(1.13f).scaleY(1.13f).setDuration(90).withEndAction {
             source.animate().scaleX(1f).scaleY(1f).setDuration(130).start()
         }.start()
         applyZoom()
+    }
+
+    private fun updateZoomPresetSelection() {
+        val presets = listOf(
+            R.id.zoomPreset1 to 1f,
+            R.id.zoomPreset2 to 2f,
+            R.id.zoomPreset4 to 4f,
+            R.id.zoomPreset10 to 10f
+        )
+        presets.forEach { (id, value) ->
+            val view = findViewById<TextView>(id)
+            val selected = kotlin.math.abs(zoom - value) < 0.15f
+            view.setBackgroundResource(if (selected) R.drawable.bg_active_pill else R.drawable.bg_glass_pill)
+            view.setTextColor(if (selected) 0xFF101318.toInt() else 0xFFA7ABB5.toInt())
+        }
     }
 
     private fun setFramingVisible(visible: Boolean) {
