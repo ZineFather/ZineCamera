@@ -199,18 +199,123 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun showVideoQualityMenu() {
+    private fun showAspectOrVideoMenu() {
         val menu = android.widget.PopupMenu(this, qualityButton)
-        videoQualities.forEachIndexed { index, q -> menu.menu.add(0,index,index,q.label) }
+        if (selectedMode == "VIDEO") {
+            videoQualities.forEachIndexed { index, q -> menu.menu.add(0, index, index, q.label) }
+            menu.menu.add(0, 10, 10, "UHD 60 FPS · FORCE")
+            menu.setOnMenuItemClickListener { item ->
+                if (item.itemId == 10) {
+                    selectedVideoQuality = "4K60"
+                    setStatus("Force 4K60 selected · no automatic downgrade")
+                } else {
+                    val q = videoQualities[item.itemId]
+                    selectedVideoQuality = when {
+                        q.width == 1280 -> "720p30"
+                        q.width == 1920 && q.fps == 30 -> "1080p30"
+                        q.width == 1920 -> "1080p60"
+                        q.fps == 30 -> "4K30"
+                        else -> "4K60"
+                    }
+                }
+                qualityButton.text = selectedVideoQualityLabel()
+                true
+            }
+        } else {
+            listOf("3:4", "9:16", "1:1", "Full").forEachIndexed { i, label -> menu.menu.add(0, i, i, label) }
+            menu.setOnMenuItemClickListener { item ->
+                aspectRatio = listOf("3:4", "9:16", "1:1", "Full")[item.itemId]
+                qualityButton.text = aspectRatio
+                setStatus("Photo aspect ratio: $aspectRatio")
+                true
+            }
+        }
+        menu.show()
+    }
+
+    private fun selectedVideoQualityLabel(): String = when (selectedVideoQuality) {
+        "720p30" -> "HD · 30"
+        "1080p60" -> "FHD · 60"
+        "4K30" -> "UHD · 30"
+        "4K60" -> "UHD · 60 FORCE"
+        else -> "FHD · 30"
+    }
+
+    private fun showFlashMenu() {
+        val menu = android.widget.PopupMenu(this, flashButton)
+        listOf("Off", "Auto", "On", "Torch").forEachIndexed { i, value -> menu.menu.add(0, i, i, value) }
         menu.setOnMenuItemClickListener { item ->
-            val q=videoQualities[item.itemId]
-            selectedVideoQuality=when { q.width==1280 -> "720p30"; q.width==1920 && q.fps==30 -> "1080p30"; q.width==1920 -> "1080p60"; q.fps==30 -> "4K30"; else -> "4K60" }
-            qualityButton.text=q.label.replace(" FPS","")
-            setStatus("Video quality: ${q.label}")
+            flashMode = listOf("OFF", "AUTO", "ON", "TORCH")[item.itemId]
+            flash = flashMode == "TORCH" || flashMode == "ON"
+            flashButton.alpha = if (flashMode == "OFF") 0.55f else 1f
+            updateRepeatingRequest()
+            setStatus("Flash: $flashMode")
             true
         }
         menu.show()
     }
+
+    private fun showTimerMenu() {
+        val menu = android.widget.PopupMenu(this, timerButton)
+        listOf("Off", "3 seconds", "5 seconds", "10 seconds").forEachIndexed { i, value -> menu.menu.add(0, i, i, value) }
+        menu.setOnMenuItemClickListener { item ->
+            timerSeconds = listOf(0, 3, 5, 10)[item.itemId]
+            timerButton.text = if (timerSeconds == 0) "OFF" else "${timerSeconds}s"
+            true
+        }
+        menu.show()
+    }
+
+    private fun showSettingsMenu() {
+        val menu = android.widget.PopupMenu(this, settingsButton)
+        menu.menu.add(0, 0, 0, if (experimental1000x) "Disable 1000x experimental zoom" else "Enable 1000x experimental zoom")
+        menu.menu.add(0, 1, 1, "Save location / info")
+        menu.menu.add(0, 2, 2, "Reset defaults")
+        menu.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                0 -> {
+                    experimental1000x = !experimental1000x
+                    zoomSlider.max = if (experimental1000x) 1000 else 700
+                    zoomMode.text = if (experimental1000x) "1000x" else "100x"
+                    setStatus(if (experimental1000x) "Experimental zoom enabled" else "Experimental zoom disabled")
+                }
+                1 -> setStatus("Location metadata is not enabled in this build")
+                2 -> {
+                    flashMode = "OFF"; flash = false; timerSeconds = 0; zoom = 1f
+                    selectedVideoQuality = "1080p30"; aspectRatio = "3:4"
+                    zoomSlider.progress = 0; zoomValue.text = "1.0x"; timerButton.text = "OFF"
+                    qualityButton.text = if (selectedMode == "VIDEO") selectedVideoQualityLabel() else aspectRatio
+                    framingMiniMap.visibility = View.GONE
+                    preview.scaleX = 1f; preview.scaleY = 1f
+                    updateRepeatingRequest(); setStatus("Camera defaults restored")
+                }
+            }
+            true
+        }
+        menu.show()
+    }
+
+    private fun showZoomLimitMenu() {
+        val menu = android.widget.PopupMenu(this, zoomMode)
+        menu.menu.add("100x")
+        menu.menu.add("1000x experimental")
+        menu.setOnMenuItemClickListener { item ->
+            experimental1000x = item.title.toString().startsWith("1000")
+            zoomSlider.max = if (experimental1000x) 1000 else 700
+            zoomMode.text = if (experimental1000x) "1000x" else "100x"
+            if (!experimental1000x && zoom > 100f) {
+                zoom = 100f
+                zoomValue.text = "100.0x"
+                zoomSlider.progress = zoomSlider.max
+                applyZoom()
+            }
+            setStatus(if (experimental1000x) "1000x experimental digital zoom" else "Zoom limit: 100x")
+            true
+        }
+        menu.show()
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
 
     private val textureListener = object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = openCamera()
