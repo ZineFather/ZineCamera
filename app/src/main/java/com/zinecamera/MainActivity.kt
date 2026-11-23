@@ -266,33 +266,14 @@ class MainActivity : Activity() {
     private fun applyAspectRatio(animate: Boolean) {
         if (!::previewContainer.isInitialized || !::preview.isInitialized) return
         previewContainer.post {
-            val availableWidth = previewContainer.width
-            val availableHeight = previewContainer.height
-            if (availableWidth <= 0 || availableHeight <= 0) return@post
-            val availableRatio = availableWidth.toFloat() / availableHeight.toFloat()
-            val target = when (aspectRatio) {
-                "3:4" -> 3f / 4f
-                "9:16" -> 9f / 16f
-                "1:1" -> 1f
-                else -> availableRatio
-            }
-            val width: Int
-            val height: Int
-            if (aspectRatio == "Full") {
-                width = availableWidth
-                height = availableHeight
-            } else if (target > availableRatio) {
-                width = availableWidth
-                height = (availableWidth / target).roundToInt()
-            } else {
-                height = availableHeight
-                width = (availableHeight * target).roundToInt()
-            }
+            if (previewContainer.width <= 0 || previewContainer.height <= 0) return@post
+            // Keep the live view edge-to-edge. The selected ratio is applied to the
+            // captured JPEG crop, not by shrinking the TextureView and exposing
+            // a large empty black region around the preview.
             val params = preview.layoutParams as FrameLayout.LayoutParams
-            params.width = width.coerceAtLeast(1)
-            params.height = height.coerceAtLeast(1)
+            params.width = FrameLayout.LayoutParams.MATCH_PARENT
+            params.height = FrameLayout.LayoutParams.MATCH_PARENT
             params.gravity = android.view.Gravity.CENTER
-            if (animate) TransitionManager.beginDelayedTransition(previewContainer, android.transition.ChangeBounds().apply { duration = 220 })
             preview.layoutParams = params
             preview.post { updatePreviewTransform() }
         }
