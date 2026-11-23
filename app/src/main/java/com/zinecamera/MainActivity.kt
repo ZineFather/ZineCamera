@@ -178,11 +178,14 @@ class MainActivity : ComponentActivity() {
             val fps = info.getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
             val sizes = map?.getOutputSizes(android.media.MediaRecorder::class.java).orEmpty()
             val supports4k = sizes.any { it.width >= 3840 && it.height >= 2160 }
+            val highSpeedSizes = map?.highSpeedVideoSizes.orEmpty()
+            val highSpeed1080 = highSpeedSizes.firstOrNull { it.width >= 1920 && it.height >= 1080 }
+            val highSpeedRanges = highSpeed1080?.let { map?.getHighSpeedVideoFpsRangesFor(it) }.orEmpty()
+            val supports1080p120 = highSpeedRanges.any { it.upper >= 120 }
+            val highSpeedText = if (highSpeed1080 == null) "not listed" else highSpeedRanges.joinToString { "${it.lower}–${it.upper}fps" }
             val fpsText = fps?.joinToString { "${it.lower}–${it.upper}" } ?: "unknown"
-            val supports1080p120 = sizes.any { it.width >= 1920 && it.height >= 1080 } &&
-                fps?.any { it.upper >= 120 } == true
-            status.text = "Zoom 1–${String.format(Locale.US, "%.1f", maxZoom)}x • 4K stream: ${if (supports4k) "listed" else "not listed"} • 1080p120 candidate: ${if (supports1080p120) "check high-speed map" else "not indicated"}"
-            status.contentDescription = "AE FPS ranges: $fpsText"
+            status.text = "Zoom 1–${String.format(Locale.US, "%.1f", maxZoom)}x • 4K stream: ${if (supports4k) "listed" else "not listed"} • 1080p120: ${if (supports1080p120) "high-speed stream listed" else "not listed"}"
+            status.contentDescription = "High-speed 1080p ranges: $highSpeedText. AE FPS ranges: $fpsText"
         } catch (_: Exception) {
             status.text = "Camera ready • capability query incomplete"
         }
