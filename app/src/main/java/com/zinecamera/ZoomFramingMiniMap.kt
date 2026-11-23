@@ -9,66 +9,79 @@ import android.view.View
 import kotlin.math.max
 
 class ZoomFramingMiniMap(context: Context) : View(context) {
-    private val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xD9161A22.toInt() }
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF8FB8FF.toInt()
+        color = 0xDDEAF2FF.toInt()
         style = Paint.Style.STROKE
-        strokeWidth = dp(1.4f)
+        strokeWidth = dp(1.35f)
     }
-    private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x55FFFFFF
-        strokeWidth = dp(0.7f)
+    private val cropShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xCC10151D.toInt()
+        style = Paint.Style.STROKE
+        strokeWidth = dp(4.2f)
     }
-    private val framePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFFFFFFF.toInt()
+    private val cropPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFFFFD54F.toInt()
         style = Paint.Style.STROKE
         strokeWidth = dp(1.8f)
     }
-    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val crosshairPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFFFFFFF.toInt()
-        textSize = dp(10f)
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1.25f)
+    }
+    private val labelBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xAA080C13.toInt()
+    }
+    private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFFFFFFFF.toInt()
+        textSize = dp(9.5f)
         typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
     }
-    private var zoomFactor = 1f
-    private var hardwareMax = 1f
+
+    @Volatile private var zoomFactor = 1f
 
     fun setZoom(zoom: Float, nativeMax: Float) {
         zoomFactor = max(1f, zoom)
-        hardwareMax = max(1f, nativeMax)
-        invalidate()
+        postInvalidateOnAnimation()
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val w = width.toFloat()
         val h = height.toFloat()
-        if (w <= 0f || h <= 0f) return
-        val outer = RectF(0f, 0f, w, h)
-        canvas.drawRoundRect(outer, dp(13f), dp(13f), backgroundPaint)
-        canvas.save()
-        canvas.clipRect(dp(7f), dp(7f), w - dp(7f), h - dp(25f))
-        val left = dp(9f)
-        val top = dp(9f)
-        val right = w - dp(9f)
-        val bottom = h - dp(27f)
-        for (i in 1..3) {
-            val x = left + (right - left) * i / 4f
-            val y = top + (bottom - top) * i / 4f
-            canvas.drawLine(x, top, x, bottom, gridPaint)
-            canvas.drawLine(left, y, right, y, gridPaint)
-        }
-        val ratio = (1f / zoomFactor).coerceIn(0.035f, 1f)
-        val fw = (right - left) * ratio
-        val fh = (bottom - top) * ratio
-        val cx = (left + right) / 2f
-        val cy = (top + bottom) / 2f
-        val frame = RectF(cx - fw / 2f, cy - fh / 2f, cx + fw / 2f, cy + fh / 2f)
-        canvas.drawRoundRect(frame, dp(2f), dp(2f), framePaint)
-        canvas.drawLine(cx - dp(5f), cy, cx + dp(5f), cy, framePaint)
-        canvas.drawLine(cx, cy - dp(5f), cx, cy + dp(5f), framePaint)
-        canvas.restore()
-        canvas.drawText("FRAMING", dp(9f), h - dp(9f), textPaint)
-        canvas.drawRoundRect(outer, dp(13f), dp(13f), borderPaint)
+        if (w <= dp(12f) || h <= dp(24f)) return
+
+        val edge = dp(2f)
+        val outer = RectF(edge, edge, w - edge, h - edge)
+        canvas.drawRoundRect(outer, dp(11f), dp(11f), borderPaint)
+
+        val left = dp(8f)
+        val top = dp(8f)
+        val right = w - dp(8f)
+        val bottom = h - dp(23f)
+        val zoomRatio = (1f / zoomFactor).coerceIn(0.018f, 1f)
+        val frameWidth = (right - left) * zoomRatio
+        val frameHeight = (bottom - top) * zoomRatio
+        val centerX = (left + right) * 0.5f
+        val centerY = (top + bottom) * 0.5f
+        val frame = RectF(
+            centerX - frameWidth * 0.5f,
+            centerY - frameHeight * 0.5f,
+            centerX + frameWidth * 0.5f,
+            centerY + frameHeight * 0.5f
+        )
+
+        canvas.drawRoundRect(frame, dp(2f), dp(2f), cropShadowPaint)
+        canvas.drawRoundRect(frame, dp(2f), dp(2f), cropPaint)
+        val cross = dp(4.5f)
+        canvas.drawLine(centerX - cross, centerY, centerX + cross, centerY, crosshairPaint)
+        canvas.drawLine(centerX, centerY - cross, centerX, centerY + cross, crosshairPaint)
+
+        val label = "WIDE  ${String.format(java.util.Locale.US, "%.1fx", zoomFactor)}"
+        val textWidth = labelPaint.measureText(label)
+        val labelRect = RectF(dp(5f), h - dp(19f), dp(12f) + textWidth, h - dp(4f))
+        canvas.drawRoundRect(labelRect, dp(5f), dp(5f), labelBackgroundPaint)
+        canvas.drawText(label, dp(8f), h - dp(8f), labelPaint)
     }
 
     private fun dp(value: Float): Float = value * resources.displayMetrics.density
