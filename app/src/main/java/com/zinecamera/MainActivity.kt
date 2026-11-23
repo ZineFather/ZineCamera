@@ -1,373 +1,538 @@
 package com.zinecamera
 
 import android.Manifest
+import android.app.Activity
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.media.MediaCodecList
+import android.graphics.Rect
+import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraDevice
+import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.params.StreamConfigurationMap
+import android.media.MediaRecorder
+import android.media.ImageReader
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
-import android.os.Looper
+import android.os.HandlerThread
 import android.provider.MediaStore
-import android.view.Gravity
-import android.widget.Button
-import android.widget.LinearLayout
+import android.view.Surface
+import android.view.TextureView
+import android.view.View
+import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.ComponentActivity
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.camera2.interop.Camera2CameraInfo
-import androidx.camera.core.Camera
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.video.FallbackStrategy
-import androidx.camera.video.MediaStoreOutputOptions
-import androidx.camera.video.Quality
-import androidx.camera.video.QualitySelector
-import androidx.camera.video.Recorder
-import androidx.camera.video.VideoCapture
-import androidx.camera.video.VideoRecordEvent
-import androidx.camera.view.PreviewView
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import android.hardware.camera2.CameraCharacteristics
+import java.io.FileDescriptor
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.Executors
-import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.roundToInt
 
-class MainActivity : ComponentActivity() {
-    private lateinit var previewView: PreviewView
+class MainActivity : Activity() {
+    private lateinit var preview: TextureView
     private lateinit var status: TextView
-    private lateinit var zoomLabel: TextView
-    private lateinit var zoomBar: SeekBar
-    private lateinit var modeLabel: TextView
-    private var camera: Camera? = null
-    private var imageCapture: ImageCapture? = null
-    private var videoCapture: VideoCapture<Recorder>? = null
-    private var recording: androidx.camera.video.Recording? = null
-    private var maxNativeZoom = 1f
-    private var requestedZoom = 1f
-    private var isVideo = false
-    private var facing = CameraSelector.LENS_FACING_BACK
-    private var flashEnabled = false
-    private var timerSeconds = 0
-    private var selectedMode = "PHOTO"
-    private var selectedQuality = Quality.FHD
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private val cameraExecutor = Executors.newSingleThreadExecutor()
+    private lateinit var zoomValue: TextView
+    private lateinit var zoomSlider: SeekBar
+    private lateinit var zoomMode: TextView
+    private lateinit var flashButton: TextView
+    private lateinit var timerButton: TextView
+    private lateinit var force4kButton: TextView
+    private lateinit var qualityButton: TextView
+    private lateinit var shutter: View
+    private lateinit var recordIndicator: TextView
 
-    private val permissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { grants ->
-        if (grants[Manifest.permission.CAMERA] == true) startCamera()
-        else status.text = "Camera permission is required"
+    private val cameraManager by lazy { getSystemService(Context.CAMERA_SERVICE) as CameraManager }
+    private var cameraId: String = ""
+    private var cameraDevice: CameraDevice? = null
+    private var session: CameraCaptureSession? = null
+    private var imageReader: ImageReader? = null
+    private var recorder: MediaRecorder? = null
+    private var recorderDescriptor: android.os.ParcelFileDescriptor? = null
+    private var recordingUri: android.net.Uri? = null
+    private var recording = false
+    private var frontCamera = false
+    private var flash = false
+    private var force4k60 = false
+    private var experimental1000x = false
+    private var timerSeconds = 0
+    private var zoom = 1f
+    private var maxZoom = 1f
+    private var activeArray: Rect? = null
+    private var previewSurface: Surface? = null
+    private var previewSize = android.util.Size(1920, 1080)
+    private var photoPendingUri: android.net.Uri? = null
+    private var selectedMode = "PHOTO"
+    private var aspectWide = false
+    private var cameraThread: HandlerThread? = null
+    private var cameraHandler: Handler? = null
+    private var pendingVideoStart: (() -> Unit)? = null
+
+    private val cameraCallback = object : CameraDevice.StateCallback() {
+        override fun onOpened(camera: CameraDevice) {
+            cameraDevice = camera
+            createPreviewSession()
+        }
+        override fun onDisconnected(camera: CameraDevice) {
+            camera.close()
+            if (cameraDevice === camera) cameraDevice = null
+            setStatus("Camera disconnected")
+        }
+        override fun onError(camera: CameraDevice, error: Int) {
+            camera.close()
+            if (cameraDevice === camera) cameraDevice = null
+            setStatus("Camera error ($error)")
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        buildInterface()
-        if (hasPermissions()) startCamera() else permissionLauncher.launch(requiredPermissions())
+        window.statusBarColor = android.graphics.Color.BLACK
+        window.navigationBarColor = android.graphics.Color.BLACK
+        setContentView(R.layout.activity_main)
+        bindViews()
+        startCameraThread()
+        wireControls()
+        if (hasPermissions()) {
+            if (preview.isAvailable) openCamera() else preview.surfaceTextureListener = textureListener
+        } else {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO), 41)
+        }
     }
 
-    private fun buildInterface() {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFF08090D.toInt())
-            setPadding(14, 12, 14, 12)
-        }
-        val header = TextView(this).apply {
-            text = "ZINE CAMERA"
-            textSize = 18f
-            setTextColor(0xFFFFFFFF.toInt())
-            gravity = Gravity.CENTER
-            letterSpacing = 0.18f
-        }
-        previewView = PreviewView(this).apply {
-            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-            scaleType = PreviewView.ScaleType.FILL_CENTER
-        }
-        val previewParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
-        ).apply { topMargin = 10; bottomMargin = 8 }
-        status = label("Starting camera…", 11f, 0xFFB9C0CE.toInt())
-        modeLabel = label("PHOTO", 13f, 0xFF72A7FF.toInt())
-        zoomLabel = label("1.0x", 19f, 0xFFFFFFFF.toInt())
-        zoomBar = SeekBar(this).apply {
-            max = 1000
-            progress = 0
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    val zoom = 1000f.pow(progress / 1000f)
-                    applyZoom(zoom)
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-            })
-        }
+    private fun bindViews() {
+        preview = findViewById(R.id.cameraPreview)
+        status = findViewById(R.id.statusText)
+        zoomValue = findViewById(R.id.zoomValue)
+        zoomSlider = findViewById(R.id.zoomSlider)
+        zoomMode = findViewById(R.id.zoomMode)
+        flashButton = findViewById(R.id.flashButton)
+        timerButton = findViewById(R.id.timerButton)
+        force4kButton = findViewById(R.id.force4kButton)
+        qualityButton = findViewById(R.id.qualityButton)
+        shutter = findViewById(R.id.shutterButton)
+        recordIndicator = findViewById(R.id.recordIndicator)
+    }
 
-        val modeRow = row()
-        listOf("PHOTO", "VIDEO", "PORTRAIT", "NIGHT", "PRO").forEach { mode ->
-            modeRow.addView(makeButton(mode) {
-                selectedMode = mode
-                isVideo = mode == "VIDEO"
-                modeLabel.text = "$mode MODE"
-                status.text = when (mode) {
-                    "PORTRAIT" -> "Portrait mode selected • depth effect is not available yet"
-                    "NIGHT" -> "Night mode selected • standard exposure pipeline"
-                    "PRO" -> "Pro mode selected • manual controls are experimental"
-                    "VIDEO" -> "Video mode • software zoom is preview-only while recording"
-                    else -> "Photo mode ready"
-                }
-                if (isVideo) applyZoom(requestedZoom)
-            })
+    private fun wireControls() {
+        flashButton.setOnClickListener {
+            flash = !flash
+            flashButton.alpha = if (flash) 1f else 0.55f
+            updateRepeatingRequest()
+            setStatus(if (flash) "Flash enabled" else "Flash disabled")
         }
-        val quickRow = row()
-        quickRow.addView(makeButton("FLASH") {
-            flashEnabled = !flashEnabled
-            imageCapture?.flashMode = if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
-            Toast.makeText(this, if (flashEnabled) "Flash on" else "Flash off", Toast.LENGTH_SHORT).show()
-        })
-        quickRow.addView(makeButton("TIMER") {
+        timerButton.setOnClickListener {
             timerSeconds = when (timerSeconds) { 0 -> 3; 3 -> 10; else -> 0 }
-            Toast.makeText(this, "Timer: ${if (timerSeconds == 0) "Off" else "${timerSeconds}s"}", Toast.LENGTH_SHORT).show()
-        })
-        quickRow.addView(makeButton("4K60 TEST") { probe4k60() })
-        quickRow.addView(makeButton("QUALITY") {
-            selectedQuality = when (selectedQuality) {
-                Quality.FHD -> Quality.UHD
-                Quality.UHD -> Quality.HD
-                else -> Quality.FHD
-            }
-            Toast.makeText(this, "Requested video quality: ${selectedQualityLabel()}", Toast.LENGTH_SHORT).show()
-            status.text = "Quality applies after camera restart; selected ${selectedQualityLabel()}"
-        })
-        quickRow.addView(makeButton("GALLERY") { openGallery() })
-
-        val actionRow = row()
-        actionRow.addView(makeButton("SWITCH") {
-            facing = if (facing == CameraSelector.LENS_FACING_BACK) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
-            startCamera()
-        })
-        actionRow.addView(makeButton("CAPTURE") { takePhoto() })
-        actionRow.addView(makeButton("REC / STOP") { toggleRecording() })
-
-        root.addView(header)
-        root.addView(previewView, previewParams)
-        root.addView(modeLabel)
-        root.addView(zoomLabel)
-        root.addView(zoomBar)
-        root.addView(modeRow)
-        root.addView(quickRow)
-        root.addView(actionRow)
-        root.addView(status)
-        setContentView(root)
-    }
-
-    private fun Float.pow(power: Float): Float = Math.pow(this.toDouble(), power.toDouble()).toFloat()
-    private fun label(value: String, size: Float, color: Int) = TextView(this).apply {
-        text = value; textSize = size; setTextColor(color); gravity = Gravity.CENTER
-    }
-    private fun row() = LinearLayout(this).apply { gravity = Gravity.CENTER; orientation = LinearLayout.HORIZONTAL }
-    private fun makeButton(label: String, weight: Float = 1f, action: () -> Unit) = Button(this).apply {
-        text = label; textSize = 10f; isAllCaps = false
-        setPadding(2, 0, 2, 0)
-        setOnClickListener { action() }
-        layoutParams = LinearLayout.LayoutParams(0, 48, weight).apply { setMargins(2, 3, 2, 3) }
-    }
-    private fun selectedQualityLabel() = when (selectedQuality) {
-        Quality.UHD -> "4K"
-        Quality.HD -> "720p"
-        else -> "1080p"
-    }
-
-    private fun requiredPermissions(): Array<String> {
-        val permissions = mutableListOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT <= 28) permissions += Manifest.permission.WRITE_EXTERNAL_STORAGE
-        return permissions.toTypedArray()
-    }
-    private fun hasPermissions() = requiredPermissions().all {
-        ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
-    }
-
-    private fun startCamera() {
-        val providerFuture = ProcessCameraProvider.getInstance(this)
-        providerFuture.addListener({
-            try {
-                val provider = providerFuture.get()
-                val selector = CameraSelector.Builder().requireLensFacing(facing).build()
-                val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
-                imageCapture = ImageCapture.Builder()
-                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-                    .setFlashMode(if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF)
-                    .build()
-                val recorder = Recorder.Builder().setQualitySelector(
-                    QualitySelector.fromOrderedList(
-                        listOf(selectedQuality, Quality.FHD, Quality.HD, Quality.SD).distinct(),
-                        FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
-                    )
-                ).build()
-                videoCapture = VideoCapture.withOutput(recorder)
-                provider.unbindAll()
-                camera = provider.bindToLifecycle(this, selector, preview, imageCapture, videoCapture)
-                maxNativeZoom = camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 1f
-                applyZoom(requestedZoom)
-                reportCapabilities()
-            } catch (e: Exception) {
-                status.text = "Camera error: ${e.localizedMessage ?: e.javaClass.simpleName}"
-            }
-        }, ContextCompat.getMainExecutor(this))
-    }
-
-    private fun applyZoom(value: Float) {
-        requestedZoom = value.coerceIn(1f, 1000f)
-        val native = min(requestedZoom, maxNativeZoom.coerceAtLeast(1f))
-        camera?.cameraControl?.setZoomRatio(native)
-        val software = if (isVideo) 1f else (requestedZoom / native).coerceAtLeast(1f)
-        previewView.scaleX = software
-        previewView.scaleY = software
-        zoomLabel.text = String.format(Locale.US, "%.1fx", requestedZoom)
-        if (requestedZoom > maxNativeZoom && !isVideo) {
-            status.text = "Experimental digital zoom • native %.1fx + software crop".format(Locale.US, maxNativeZoom)
-        } else if (requestedZoom > maxNativeZoom && isVideo) {
-            status.text = "Video zoom limited to native %.1fx".format(Locale.US, maxNativeZoom)
+            timerButton.text = if (timerSeconds == 0) "OFF" else "${timerSeconds}s"
         }
-    }
-
-    private fun probe4k60() {
-        try {
-            val cam = camera ?: run { status.text = "Camera is not ready"; return }
-            val info = Camera2CameraInfo.from(cam.cameraInfo)
-            val map = info.getCameraCharacteristic(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            val camera4k = map?.getOutputSizes(android.media.MediaRecorder::class.java)
-                ?.any { it.width >= 3840 && it.height >= 2160 } == true
-            val fps60 = info.getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
-                ?.any { it.upper >= 60 } == true
-            val encoder4k60 = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
-                .filter { it.isEncoder }
-                .flatMap { codec -> codec.supportedTypes.filter { it.startsWith("video/") }.map { type -> codec to type } }
-                .any { (codec, type) ->
-                    try {
-                        codec.getCapabilitiesForType(type).videoCapabilities
-                            .areSizeAndRateSupported(3840, 2160, 60.0)
-                    } catch (_: Exception) { false }
+        force4kButton.setOnClickListener {
+            force4k60 = !force4k60
+            force4kButton.alpha = if (force4k60) 1f else 0.55f
+            setStatus(if (force4k60) "Experimental 4K60 attempt enabled" else "4K60 attempt disabled")
+        }
+        qualityButton.setOnClickListener {
+            aspectWide = !aspectWide
+            qualityButton.text = if (aspectWide) "16:9 · UHD" else "4:3 · 12MP"
+            setStatus("Photo aspect preference updated")
+        }
+        zoomMode.setOnClickListener {
+            experimental1000x = !experimental1000x
+            zoomSlider.max = if (experimental1000x) 1000 else 700
+            zoomMode.text = if (experimental1000x) "1000x" else "100x"
+            setStatus(if (experimental1000x) "Experimental digital zoom enabled" else "Digital zoom limited to 100x")
+        }
+        zoomSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                val limit = if (experimental1000x) 1000f else 100f
+                zoom = 1f + (limit - 1f) * progress / zoomSlider.max.coerceAtLeast(1)
+                zoomValue.text = String.format(Locale.US, "%.1fx", zoom)
+                applyZoom()
+            }
+            override fun onStartTrackingTouch(bar: SeekBar?) {}
+            override fun onStopTrackingTouch(bar: SeekBar?) {}
+        }
+        shutter.setOnClickListener {
+            if (selectedMode == "VIDEO") {
+                if (recording) stopRecording() else startRecording()
+            } else {
+                if (timerSeconds > 0) {
+                    setStatus("Photo in ${timerSeconds}s")
+                    shutter.postDelayed({ takePhoto() }, timerSeconds * 1000L)
+                } else takePhoto()
+            }
+        }
+        findViewById<ImageView>(R.id.galleryButton).setOnClickListener {
+            val intent = Intent(Intent.ACTION_VIEW, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply { type = "image/*" }
+            runCatching { startActivity(intent) }.onFailure { setStatus("Gallery app unavailable") }
+        }
+        findViewById<TextView>(R.id.switchButton).setOnClickListener {
+            if (recording) return@setOnClickListener
+            frontCamera = !frontCamera
+            closeCamera()
+            openCamera()
+        }
+        val modes = listOf(
+            R.id.modePhoto to "PHOTO", R.id.modeVideo to "VIDEO",
+            R.id.modePortrait to "PORTRAIT", R.id.modeNight to "NIGHT", R.id.modePro to "PRO"
+        )
+        modes.forEach { (id, mode) ->
+            findViewById<TextView>(id).setOnClickListener {
+                selectedMode = mode
+                modes.forEach { (otherId, otherMode) ->
+                    val view = findViewById<TextView>(otherId)
+                    view.setBackgroundResource(if (otherMode == mode) R.drawable.bg_active_pill else R.drawable.bg_glass_pill)
+                    view.setTextColor(if (otherMode == mode) 0xFF101318.toInt() else 0xFFA7ABB5.toInt())
                 }
-            status.text = "4K60 probe • Camera 4K: $camera4k • AE 60fps: $fps60 • Encoder 4K60: $encoder4k60 • diagnostic only"
-            Toast.makeText(this, "Probe complete. This does not force unsupported recording modes.", Toast.LENGTH_LONG).show()
-        } catch (e: Exception) {
-            status.text = "4K60 probe unavailable: ${e.localizedMessage ?: "unknown error"}"
+                recordIndicator.text = if (mode == "VIDEO") "TAP TO RECORD" else "CAPTURE"
+                setStatus(when (mode) {
+                    "PORTRAIT" -> "Portrait mode • depth effect depends on camera support"
+                    "NIGHT" -> "Night mode selected"
+                    "PRO" -> "Pro mode selected"
+                    "VIDEO" -> "Video mode ready"
+                    else -> "Photo mode ready"
+                })
+            }
         }
     }
 
-    private fun reportCapabilities() {
-        val cam = camera ?: return
+    private val textureListener = object : TextureView.SurfaceTextureListener {
+        override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = openCamera()
+        override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
+        override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean = true
+        override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) = Unit
+    }
+
+    private fun startCameraThread() {
+        cameraThread = HandlerThread("ZineCamera2").also { it.start() }
+        cameraHandler = Handler(cameraThread!!.looper)
+    }
+
+    private fun hasPermissions() =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 41 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            if (preview.isAvailable) openCamera() else preview.surfaceTextureListener = textureListener
+        } else setStatus("Camera permission is required")
+    }
+
+    private fun openCamera() {
+        if (!hasPermissions() || !preview.isAvailable || isFinishing) return
         try {
-            val info = Camera2CameraInfo.from(cam.cameraInfo)
-            val map = info.getCameraCharacteristic(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            val sizes = map?.getOutputSizes(android.media.MediaRecorder::class.java).orEmpty()
-            val supports4k = sizes.any { it.width >= 3840 && it.height >= 2160 }
-            val fps = info.getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
-            val ranges = fps?.joinToString { "${it.lower}–${it.upper}" } ?: "unknown"
-            status.text = "Native zoom ${"%.1f".format(Locale.US, maxNativeZoom)}x • 4K stream: ${if (supports4k) "listed" else "not listed"} • AE FPS: $ranges"
-        } catch (_: Exception) {
-            status.text = "Camera ready • capability query incomplete"
+            val ids = cameraManager.cameraIdList
+            cameraId = ids.firstOrNull { id ->
+                val facing = cameraManager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING)
+                facing == if (frontCamera) CameraCharacteristics.LENS_FACING_FRONT else CameraCharacteristics.LENS_FACING_BACK
+            } ?: ids.first()
+            val chars = cameraManager.getCameraCharacteristics(cameraId)
+            activeArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+            maxZoom = (chars.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f).coerceAtLeast(1f)
+            val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            val sizes = map?.getOutputSizes(SurfaceTexture::class.java).orEmpty()
+            previewSize = sizes.firstOrNull { it.width <= 1920 && it.height <= 1080 } ?: sizes.firstOrNull() ?: android.util.Size(1280, 720)
+            preview.surfaceTexture?.setDefaultBufferSize(previewSize.width, previewSize.height)
+            cameraManager.openCamera(cameraId, cameraCallback, cameraHandler)
+            setStatus("Camera ready")
+        } catch (e: Exception) {
+            setStatus("Open failed: ${e.message ?: e.javaClass.simpleName}")
         }
+    }
+
+    private fun createPreviewSession() {
+        val device = cameraDevice ?: return
+        try {
+            val texture = preview.surfaceTexture ?: return
+            texture.setDefaultBufferSize(previewSize.width, previewSize.height)
+            previewSurface = Surface(texture)
+            val jpegSizes = cameraManager.getCameraCharacteristics(cameraId)
+                .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                ?.getOutputSizes(android.graphics.ImageFormat.JPEG)
+            val photoSize = jpegSizes?.maxByOrNull { it.width.toLong() * it.height } ?: android.util.Size(1920, 1080)
+            imageReader?.close()
+            imageReader = ImageReader.newInstance(photoSize.width, photoSize.height, android.graphics.ImageFormat.JPEG, 2)
+            imageReader?.setOnImageAvailableListener({ reader ->
+                val image = reader.acquireNextImage() ?: return@setOnImageAvailableListener
+                val bytes = image.planes[0].buffer.let { buffer -> ByteArray(buffer.remaining()).also(buffer::get) }
+                image.close()
+                val uri = photoPendingUri ?: return@setOnImageAvailableListener
+                try {
+                    contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                    photoPendingUri = null
+                    runOnUiThread { setStatus("Photo saved to Pictures/ZineCamera") }
+                } catch (e: Exception) {
+                    runOnUiThread { setStatus("Photo save failed") }
+                }
+            }, cameraHandler)
+            val surfaces = listOfNotNull(previewSurface, imageReader?.surface)
+            device.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
+                override fun onConfigured(configured: CameraCaptureSession) {
+                    session = configured
+                    updateRepeatingRequest()
+                }
+                override fun onConfigureFailed(failed: CameraCaptureSession) = setStatus("Preview configuration failed")
+            }, cameraHandler)
+        } catch (e: Exception) {
+            setStatus("Preview failed: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    private fun buildPreviewRequest(): CaptureRequest? {
+        val device = cameraDevice ?: return null
+        val surface = previewSurface ?: return null
+        return try {
+            device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                addTarget(surface)
+                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                set(CaptureRequest.FLASH_MODE, if (flash && !frontCamera) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF)
+                cropRegion()?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
+            }.build()
+        } catch (e: Exception) {
+            setStatus("Preview request failed: ${e.message}")
+            null
+        }
+    }
+
+    private fun updateRepeatingRequest() {
+        val activeSession = session ?: return
+        val request = buildPreviewRequest() ?: return
+        try {
+            activeSession.setRepeatingRequest(request, null, cameraHandler)
+        } catch (e: Exception) {
+            setStatus("Camera control failed: ${e.message}")
+        }
+    }
+
+    private fun cropRegion(): Rect? {
+        val array = activeArray ?: return null
+        val hardwareZoom = zoom.coerceIn(1f, maxZoom)
+        val centerX = array.centerX()
+        val centerY = array.centerY()
+        val width = (array.width() / hardwareZoom).roundToInt().coerceAtLeast(2)
+        val height = (array.height() / hardwareZoom).roundToInt().coerceAtLeast(2)
+        return Rect(
+            (centerX - width / 2).coerceAtLeast(array.left),
+            (centerY - height / 2).coerceAtLeast(array.top),
+            (centerX + width / 2).coerceAtMost(array.right),
+            (centerY + height / 2).coerceAtMost(array.bottom)
+        )
+    }
+
+    private fun applyZoom() {
+        val nativeZoom = zoom.coerceAtMost(maxZoom)
+        val extra = (zoom / nativeZoom).coerceAtLeast(1f)
+        preview.scaleX = extra.coerceAtMost(100f)
+        preview.scaleY = extra.coerceAtMost(100f)
+        updateRepeatingRequest()
+        if (zoom > maxZoom) setStatus("Digital zoom • native limit ${String.format(Locale.US, "%.1f", maxZoom)}x")
     }
 
     private fun takePhoto() {
-        val capture = imageCapture ?: return
-        val action = { savePhoto(capture) }
-        if (timerSeconds == 0) action() else {
-            status.text = "Photo in ${timerSeconds}s…"
-            mainHandler.postDelayed({ action() }, timerSeconds * 1000L)
+        val device = cameraDevice ?: return
+        val activeSession = session ?: return
+        val readerSurface = imageReader?.surface ?: return
+        try {
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, "Zine_${stamp()}.jpg")
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                if (Build.VERSION.SDK_INT >= 29) put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ZineCamera")
+            }
+            photoPendingUri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            val request = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                addTarget(readerSurface)
+                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                set(CaptureRequest.CONTROL_AE_MODE, if (flash && !frontCamera) CaptureRequest.CONTROL_AE_MODE_ON_ALWAYS_FLASH else CaptureRequest.CONTROL_AE_MODE_ON)
+                if (flash && !frontCamera) set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_SINGLE)
+                cropRegion()?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
+                set(CaptureRequest.JPEG_ORIENTATION, sensorOrientation())
+            }.build()
+            activeSession.capture(request, object : CameraCaptureSession.CaptureCallback() {
+                override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: android.hardware.camera2.TotalCaptureResult) {
+                    runOnUiThread { setStatus("Photo captured") }
+                }
+            }, cameraHandler)
+        } catch (e: Exception) {
+            photoPendingUri?.let { contentResolver.delete(it, null, null) }
+            photoPendingUri = null
+            setStatus("Capture failed: ${e.message ?: e.javaClass.simpleName}")
         }
     }
 
-    private fun savePhoto(capture: ImageCapture) {
-        val name = "Zine_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.jpg"
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            if (Build.VERSION.SDK_INT >= 29) put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ZineCamera")
-        }
-        val output = ImageCapture.OutputFileOptions.Builder(contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values).build()
-        capture.takePicture(output, ContextCompat.getMainExecutor(this), object : ImageCapture.OnImageSavedCallback {
-            override fun onImageSaved(result: ImageCapture.OutputFileResults) {
-                val uri = result.savedUri
-                if (uri != null && requestedZoom > maxNativeZoom && !isVideo) {
-                    cropSavedPhoto(uri, requestedZoom / maxNativeZoom.coerceAtLeast(1f))
-                } else Toast.makeText(this@MainActivity, "Photo saved", Toast.LENGTH_SHORT).show()
-            }
-            override fun onError(exception: ImageCaptureException) {
-                Toast.makeText(this@MainActivity, exception.message ?: "Capture failed", Toast.LENGTH_LONG).show()
-            }
-        })
-    }
+    private fun sensorOrientation(): Int =
+        cameraManager.getCameraCharacteristics(cameraId).get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
 
-    private fun cropSavedPhoto(uri: android.net.Uri, factor: Float) {
-        cameraExecutor.execute {
+    private fun startRecording() {
+        val device = cameraDevice ?: return
+        val texture = preview.surfaceTexture ?: return
+        try {
+            val values = ContentValues().apply {
+                put(MediaStore.Video.Media.DISPLAY_NAME, "Zine_${stamp()}.mp4")
+                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                if (Build.VERSION.SDK_INT >= 29) {
+                    put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/ZineCamera")
+                    put(MediaStore.Video.Media.IS_PENDING, 1)
+                }
+            }
+            recordingUri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("Cannot create video file")
+            recorderDescriptor = contentResolver.openFileDescriptor(recordingUri!!, "w")
+                ?: throw IllegalStateException("Cannot open video file")
+            val media = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else @Suppress("DEPRECATION") MediaRecorder()
+            recorder = media
+            val wants4k60 = force4k60
             try {
-                val bitmap = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) } ?: return@execute
-                val cropWidth = max(1, (bitmap.width / factor).roundToInt()).coerceAtMost(bitmap.width)
-                val cropHeight = max(1, (bitmap.height / factor).roundToInt()).coerceAtMost(bitmap.height)
-                val left = (bitmap.width - cropWidth) / 2
-                val top = (bitmap.height - cropHeight) / 2
-                val cropped = Bitmap.createBitmap(bitmap, left, top, cropWidth, cropHeight)
-                contentResolver.openOutputStream(uri, "wt")?.use { stream ->
-                    cropped.compress(Bitmap.CompressFormat.JPEG, 94, stream)
-                }
-                if (cropped !== bitmap) cropped.recycle()
-                bitmap.recycle()
-                runOnUiThread { Toast.makeText(this, "Experimental digital crop saved", Toast.LENGTH_SHORT).show() }
+                configureRecorder(media, recorderDescriptor!!.fileDescriptor, if (wants4k60) 3840 else 1920, if (wants4k60) 2160 else 1080, if (wants4k60) 60 else 30)
+                createRecordingSession(device, texture, media)
             } catch (e: Exception) {
-                runOnUiThread { Toast.makeText(this, "Photo saved without software crop", Toast.LENGTH_LONG).show() }
+                if (!wants4k60) throw e
+                setStatus("4K60 rejected; falling back to 1080p30")
+                runCatching { media.reset() }
+                configureRecorder(media, recorderDescriptor!!.fileDescriptor, 1920, 1080, 30)
+                createRecordingSession(device, texture, media)
             }
+        } catch (e: Exception) {
+            cleanupFailedRecording()
+            setStatus("Video start failed: ${e.message ?: e.javaClass.simpleName}")
         }
     }
 
-    private fun toggleRecording() {
-        val capture = videoCapture ?: return
-        if (recording != null) { recording?.stop(); recording = null; return }
-        val name = "Zine_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.mp4"
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
-            if (Build.VERSION.SDK_INT >= 29) put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/ZineCamera")
-        }
-        val output = MediaStoreOutputOptions.Builder(contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI).setContentValues(values).build()
-        val pending = capture.output.prepareRecording(this, output)
-        val configured = if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) pending.withAudioEnabled() else pending
-        recording = configured.start(ContextCompat.getMainExecutor(this)) { event ->
-            when (event) {
-                is VideoRecordEvent.Start -> status.text = "Recording • software zoom disabled for video"
-                is VideoRecordEvent.Finalize -> {
-                    status.text = if (event.hasError()) "Recording failed: ${event.error}" else "Video saved"
-                    recording = null
+    private fun configureRecorder(media: MediaRecorder, fd: FileDescriptor, width: Int, height: Int, fps: Int) {
+        media.reset()
+        media.setAudioSource(MediaRecorder.AudioSource.MIC)
+        media.setVideoSource(MediaRecorder.VideoSource.SURFACE)
+        media.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+        media.setOutputFile(fd)
+        media.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+        media.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+        media.setVideoSize(width, height)
+        media.setVideoFrameRate(fps)
+        media.setVideoEncodingBitRate(if (width >= 3840) 48_000_000 else 12_000_000)
+        media.setAudioEncodingBitRate(128_000)
+        media.setAudioSamplingRate(48_000)
+        media.prepare()
+    }
+
+    private fun createRecordingSession(device: CameraDevice, texture: android.graphics.SurfaceTexture, media: MediaRecorder) {
+        texture.setDefaultBufferSize(1920, 1080)
+        val previewOut = Surface(texture)
+        val recorderOut = media.surface
+        device.createCaptureSession(listOf(previewOut, recorderOut), object : CameraCaptureSession.StateCallback() {
+            override fun onConfigured(configured: CameraCaptureSession) {
+                session = configured
+                try {
+                    val request = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
+                        addTarget(previewOut)
+                        addTarget(recorderOut)
+                        set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                        set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+                        cropRegion()?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
+                    }.build()
+                    configured.setRepeatingRequest(request, null, cameraHandler)
+                    media.start()
+                    recording = true
+                    runOnUiThread {
+                        recordIndicator.text = "● RECORDING"
+                        setStatus(if (force4k60) "Attempting 4K60 recording" else "Recording video")
+                    }
+                } catch (e: Exception) {
+                    runOnUiThread { setStatus("Recorder start failed: ${e.message}") }
+                    runCatching { media.reset() }
+                    closeCameraSession()
+                    runOnUiThread { createPreviewSession() }
                 }
             }
+            override fun onConfigureFailed(failed: CameraCaptureSession) {
+                runOnUiThread {
+                    setStatus("Video session rejected by camera")
+                    cleanupFailedRecording()
+                    createPreviewSession()
+                }
+            }
+        }, cameraHandler)
+    }
+
+    private fun stopRecording() {
+        if (!recording) return
+        recording = false
+        try {
+            recorder?.stop()
+            recorder?.reset()
+            recordingUri?.let { uri ->
+                val values = ContentValues().apply { if (Build.VERSION.SDK_INT >= 29) put(MediaStore.Video.Media.IS_PENDING, 0) }
+                contentResolver.update(uri, values, null, null)
+            }
+            setStatus("Video saved")
+        } catch (e: Exception) {
+            recordingUri?.let { contentResolver.delete(it, null, null) }
+            setStatus("Recording stopped with an error")
+        } finally {
+            recorderDescriptor?.close()
+            recorderDescriptor = null
+            recorder?.release()
+            recorder = null
+            recordingUri = null
+            recordIndicator.text = "TAP TO RECORD"
+            closeCameraSession()
+            createPreviewSession()
         }
     }
 
-    private fun openGallery() {
-        val intent = Intent(Intent.ACTION_VIEW, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply { type = "image/*" }
-        try { startActivity(intent) } catch (_: Exception) {
-            Toast.makeText(this, "No gallery app found", Toast.LENGTH_SHORT).show()
-        }
+    private fun cleanupFailedRecording() {
+        recording = false
+        runCatching { recorder?.reset(); recorder?.release() }
+        recorder = null
+        runCatching { recorderDescriptor?.close() }
+        recorderDescriptor = null
+        recordingUri?.let { contentResolver.delete(it, null, null) }
+        recordingUri = null
+        recordIndicator.text = "TAP TO RECORD"
+    }
+
+    private fun closeCameraSession() {
+        runCatching { session?.stopRepeating() }
+        runCatching { session?.abortCaptures() }
+        runCatching { session?.close() }
+        session = null
+    }
+
+    private fun stamp() = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+    private fun setStatus(message: String) { if (::status.isInitialized) status.text = message }
+
+    private fun closeCamera() {
+        closeCameraSession()
+        runCatching { cameraDevice?.close() }
+        cameraDevice = null
+        runCatching { imageReader?.close() }
+        imageReader = null
+        runCatching { previewSurface?.release() }
+        previewSurface = null
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::preview.isInitialized && preview.isAvailable && cameraDevice == null && hasPermissions()) openCamera()
+    }
+
+    override fun onPause() {
+        if (recording) stopRecording()
+        closeCamera()
+        super.onPause()
     }
 
     override fun onDestroy() {
-        mainHandler.removeCallbacksAndMessages(null)
-        recording?.stop()
-        cameraExecutor.shutdown()
+        cameraThread?.quitSafely()
+        cameraThread = null
+        cameraHandler = null
         super.onDestroy()
     }
 }
