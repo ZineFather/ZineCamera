@@ -5,10 +5,11 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.util.AttributeSet
 import android.view.View
 import kotlin.math.max
 
-class ZoomFramingMiniMap(context: Context) : View(context) {
+class ZoomFramingMiniMap @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs) {
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xDDEAF2FF.toInt()
         style = Paint.Style.STROKE
