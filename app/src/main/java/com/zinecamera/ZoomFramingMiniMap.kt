@@ -40,9 +40,13 @@ class ZoomFramingMiniMap @JvmOverloads constructor(context: Context, attrs: Attr
     }
 
     @Volatile private var zoomFactor = 1f
+    @Volatile private var centerXFraction = 0.5f
+    @Volatile private var centerYFraction = 0.5f
 
-    fun setZoom(zoom: Float, nativeMax: Float) {
+    fun setZoom(zoom: Float, nativeMax: Float, centerX: Float = 0.5f, centerY: Float = 0.5f) {
         zoomFactor = max(1f, zoom)
+        centerXFraction = centerX.coerceIn(0f, 1f)
+        centerYFraction = centerY.coerceIn(0f, 1f)
         postInvalidateOnAnimation()
     }
 
@@ -63,8 +67,8 @@ class ZoomFramingMiniMap @JvmOverloads constructor(context: Context, attrs: Attr
         val zoomRatio = (1f / zoomFactor).coerceIn(0.018f, 1f)
         val frameWidth = (right - left) * zoomRatio
         val frameHeight = (bottom - top) * zoomRatio
-        val centerX = (left + right) * 0.5f
-        val centerY = (top + bottom) * 0.5f
+        val centerX = left + (right - left) * centerXFraction
+        val centerY = top + (bottom - top) * centerYFraction
         val frame = RectF(
             centerX - frameWidth * 0.5f,
             centerY - frameHeight * 0.5f,
