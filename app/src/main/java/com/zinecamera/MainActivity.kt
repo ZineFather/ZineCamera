@@ -288,6 +288,7 @@ class MainActivity : Activity() {
 
     private fun updatePreviewTransform() {
         if (!::preview.isInitialized || !preview.isAvailable) return
+
         val viewWidth = preview.width.toFloat()
         val viewHeight = preview.height.toFloat()
         val bufferWidth = previewSize.width.toFloat()
@@ -298,42 +299,31 @@ class MainActivity : Activity() {
         val display = displayRotationDegrees()
         val rotation = if (frontCamera) (sensor + display) % 360 else (sensor - display + 360) % 360
         val normalizedRotation = ((rotation % 360) + 360) % 360
-        val swapped = normalizedRotation == 90 || normalizedRotation == 270
-        val rotatedWidth = if (swapped) bufferHeight else bufferWidth
-        val rotatedHeight = if (swapped) bufferWidth else bufferHeight
+        val rotated = normalizedRotation == 90 || normalizedRotation == 270
+
+        // TextureView.setTransform works in view coordinates. Build the transform
+        // from the view rectangle to the rotated camera-buffer rectangle, then
+        // center-crop it to fill the complete preview viewport.
+        val centerX = viewWidth / 2f
+        val centerY = viewHeight / 2f
+        val rotatedWidth = if (rotated) bufferHeight else bufferWidth
+        val rotatedHeight = if (rotated) bufferWidth else bufferHeight
+        val viewRect = android.graphics.RectF(0f, 0f, viewWidth, viewHeight)
+        val bufferRect = android.graphics.RectF(0f, 0f, rotatedWidth, rotatedHeight)
+        bufferRect.offset(centerX - bufferRect.centerX(), centerY - bufferRect.centerY())
+
+        val matrix = Matrix()
+        matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL)
+
         val fillScale = maxOf(viewWidth / rotatedWidth, viewHeight / rotatedHeight)
         val nativeZoom = zoom.coerceAtMost(maxZoom).coerceAtLeast(1f)
         val softwareZoom = (zoom / nativeZoom).coerceAtLeast(1f)
         val scale = fillScale * softwareZoom
-        val matrixValues = FloatArray(9)
-        when (normalizedRotation) {
-            90 -> {
-                matrixValues[0] = 0f; matrixValues[1] = -scale
-                matrixValues[2] = (viewWidth + bufferHeight * scale) / 2f
-                matrixValues[3] = scale; matrixValues[4] = 0f
-                matrixValues[5] = (viewHeight - bufferWidth * scale) / 2f
-            }
-            180 -> {
-                matrixValues[0] = -scale; matrixValues[1] = 0f
-                matrixValues[2] = (viewWidth + bufferWidth * scale) / 2f
-                matrixValues[3] = 0f; matrixValues[4] = -scale
-                matrixValues[5] = (viewHeight + bufferHeight * scale) / 2f
-            }
-            270 -> {
-                matrixValues[0] = 0f; matrixValues[1] = scale
-                matrixValues[2] = (viewWidth - bufferHeight * scale) / 2f
-                matrixValues[3] = -scale; matrixValues[4] = 0f
-                matrixValues[5] = (viewHeight + bufferWidth * scale) / 2f
-            }
-            else -> {
-                matrixValues[0] = scale; matrixValues[1] = 0f
-                matrixValues[2] = (viewWidth - bufferWidth * scale) / 2f
-                matrixValues[3] = 0f; matrixValues[4] = scale
-                matrixValues[5] = (viewHeight - bufferHeight * scale) / 2f
-            }
+        matrix.setScale(scale, scale, centerX, centerY)
+        if (normalizedRotation != 0) {
+            matrix.postRotate(normalizedRotation.toFloat(), centerX, centerY)
         }
-        matrixValues[6] = 0f; matrixValues[7] = 0f; matrixValues[8] = 1f
-        preview.setTransform(Matrix().apply { setValues(matrixValues) })
+        preview.setTransform(matrix)
     }
 
     private fun selectedVideoQualityLabel(): String = when (selectedVideoQuality) {
