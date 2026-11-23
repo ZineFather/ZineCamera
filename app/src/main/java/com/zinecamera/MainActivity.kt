@@ -871,7 +871,7 @@ class MainActivity : Activity() {
         closeCameraSession()
         runCatching { previewSurface?.release() }
         previewSurface = null
-        texture.setDefaultBufferSize(1920, 1080)
+        texture.setDefaultBufferSize(previewSize.width, previewSize.height)
         val previewOut = Surface(texture)
         val recorderOut = media.surface
         device.createCaptureSession(listOf(previewOut, recorderOut), object : CameraCaptureSession.StateCallback() {
