@@ -422,7 +422,8 @@ class MainActivity : Activity() {
         media.prepare()
     }
 
-    private fun createRecordingSession(device: CameraDevice, texture: android.graphics.SurfaceTexture, media: MediaRecorder) {
+    private fun createRecordingSession(device: CameraDevice, texture: android.graphics.SurfaceTexture, media: MediaRecorder, allowFallback: Boolean = force4k60) {
+        closeCameraSession()
         texture.setDefaultBufferSize(1920, 1080)
         val previewOut = Surface(texture)
         val recorderOut = media.surface
@@ -452,10 +453,25 @@ class MainActivity : Activity() {
                 }
             }
             override fun onConfigureFailed(failed: CameraCaptureSession) {
-                runOnUiThread {
-                    setStatus("Video session rejected by camera")
-                    cleanupFailedRecording()
-                    createPreviewSession()
+                if (allowFallback && recorderDescriptor != null) {
+                    try {
+                        media.reset()
+                        configureRecorder(media, recorderDescriptor!!.fileDescriptor, 1920, 1080, 30)
+                        runOnUiThread { setStatus("4K60 rejected; falling back to 1080p30") }
+                        createRecordingSession(device, texture, media, false)
+                    } catch (e: Exception) {
+                        runOnUiThread {
+                            cleanupFailedRecording()
+                            setStatus("Video fallback failed: ${e.message}")
+                            createPreviewSession()
+                        }
+                    }
+                } else {
+                    runOnUiThread {
+                        setStatus("Video session rejected by camera")
+                        cleanupFailedRecording()
+                        createPreviewSession()
+                    }
                 }
             }
         }, cameraHandler)
