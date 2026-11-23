@@ -295,34 +295,28 @@ class MainActivity : Activity() {
         val bufferHeight = previewSize.height.toFloat()
         if (viewWidth <= 0f || viewHeight <= 0f || bufferWidth <= 0f || bufferHeight <= 0f) return
 
-        val sensor = if (cameraId.isNotEmpty()) runCatching { sensorOrientation() }.getOrDefault(0) else 0
+        val sensor = if (cameraId.isNotEmpty()) runCatching { sensorOrientation() }.getOrDefault(90) else 90
         val display = displayRotationDegrees()
         val rotation = if (frontCamera) (sensor + display) % 360 else (sensor - display + 360) % 360
         val normalizedRotation = ((rotation % 360) + 360) % 360
-        val rotated = normalizedRotation == 90 || normalizedRotation == 270
+        val swapped = normalizedRotation == 90 || normalizedRotation == 270
 
-        // Camera2 buffers are landscape on many phones even when the UI is portrait.
-        // Map the view to the correctly rotated buffer rectangle, then center-crop
-        // the result so the preview fills the entire TextureView without black bars.
+        // TextureView's transform is defined in view coordinates. Rotate the
+        // camera buffer first, then center-crop it to the live viewport.
+        val rotatedWidth = if (swapped) bufferHeight else bufferWidth
+        val rotatedHeight = if (swapped) bufferWidth else bufferHeight
         val centerX = viewWidth / 2f
         val centerY = viewHeight / 2f
-        val rotatedWidth = if (rotated) bufferHeight else bufferWidth
-        val rotatedHeight = if (rotated) bufferWidth else bufferHeight
-        val viewRect = android.graphics.RectF(0f, 0f, viewWidth, viewHeight)
-        val bufferRect = android.graphics.RectF(0f, 0f, rotatedWidth, rotatedHeight)
-        bufferRect.offset(centerX - bufferRect.centerX(), centerY - bufferRect.centerY())
-
-        val matrix = Matrix()
-        matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL)
-        val fillScale = maxOf(viewHeight / rotatedHeight, viewWidth / rotatedWidth)
+        val fillScale = maxOf(viewWidth / rotatedWidth, viewHeight / rotatedHeight)
         val nativeZoom = zoom.coerceAtMost(maxZoom).coerceAtLeast(1f)
         val softwareZoom = (zoom / nativeZoom).coerceAtLeast(1f)
-        matrix.postScale(fillScale * softwareZoom, fillScale * softwareZoom, centerX, centerY)
-        when (normalizedRotation) {
-            90 -> matrix.postRotate(-90f, centerX, centerY)
-            270 -> matrix.postRotate(90f, centerX, centerY)
-            180 -> matrix.postRotate(180f, centerX, centerY)
-        }
+        val scale = fillScale * softwareZoom
+
+        val matrix = Matrix()
+        matrix.setTranslate(-bufferWidth / 2f, -bufferHeight / 2f)
+        matrix.postRotate(-normalizedRotation.toFloat())
+        matrix.postScale(scale, scale)
+        matrix.postTranslate(centerX, centerY)
         preview.setTransform(matrix)
     }
 
