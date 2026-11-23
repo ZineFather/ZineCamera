@@ -1,9 +1,19 @@
 <resources>
     <style name="Theme.ZineCamera" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:statusBarColor">#08090D</item>
-        <item name="android:navigationBarColor">#08090D</item>
+        <item name="android:statusBarColor">@color/zine_black</item>
+        <item name="android:navigationBarColor">@color/zine_black</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="colorPrimary">#8AB4FF</item>
+        <item name="colorPrimary">@color/zine_accent</item>
+    </style>
+    <style name="ModePill">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">32dp</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:gravity">center</item>
+        <item name="android:layout_margin">2dp</item>
+        <item name="android:textSize">9sp</item>
+        <item name="android:textColor">@color/zine_muted</item>
+        <item name="android:background">@drawable/bg_glass_pill</item>
     </style>
 </resources>
