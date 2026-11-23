@@ -408,7 +408,7 @@ class MainActivity : Activity() {
                 set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-                set(CaptureRequest.FLASH_MODE, if (flash && !frontCamera) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF)
+                set(CaptureRequest.FLASH_MODE, if (flashMode == "TORCH" && !frontCamera) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF)
                 cropRegion()?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
             }.build()
         } catch (e: Exception) {
@@ -447,6 +447,8 @@ class MainActivity : Activity() {
         val extra = (zoom / nativeZoom).coerceAtLeast(1f)
         preview.scaleX = extra.coerceAtMost(100f)
         preview.scaleY = extra.coerceAtMost(100f)
+        framingMiniMap.setZoom(zoom, maxZoom)
+        framingMiniMap.visibility = if (zoom >= 4f) View.VISIBLE else View.GONE
         updateRepeatingRequest()
         if (zoom > maxZoom) setStatus("Digital zoom • native limit ${String.format(Locale.US, "%.1f", maxZoom)}x")
     }
@@ -506,12 +508,21 @@ class MainActivity : Activity() {
                 val supportedSizes = cameraManager.getCameraCharacteristics(cameraId)
                     .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                     ?.getOutputSizes(MediaRecorder::class.java).orEmpty()
-                val requestedSupported = supportedSizes.any { it.width == quality.width && it.height == quality.height } &&
-                    supportedFpsRange(quality.fps) != null
+                val isForced4k60 = selectedVideoQuality == "4K60"
+                val fpsRange = if (isForced4k60) {
+                    cameraManager.getCameraCharacteristics(cameraId)
+                        .get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+                        ?.firstOrNull { it.lower == 60 && it.upper == 60 }
+                } else supportedFpsRange(quality.fps)
+                val sizeSupported = supportedSizes.any { it.width == quality.width && it.height == quality.height }
+                if (isForced4k60 && (!sizeSupported || fpsRange == null)) {
+                    throw IllegalStateException("Force 4K60 unavailable: 3840x2160 supported=$sizeSupported, exact [60,60] FPS supported=${fpsRange != null}. No fallback applied.")
+                }
+                val requestedSupported = sizeSupported && fpsRange != null
                 val actualQuality = if (requestedSupported) quality else videoQualities[1]
                 if (!requestedSupported) runOnUiThread {
-                    qualityButton.text = "1080p · 30"
-                    setStatus("${quality.label} unavailable; safely switching to 1080p30")
+                    qualityButton.text = "FHD · 30"
+                    setStatus("${quality.label} unsupported by Camera2; selected FHD30")
                 }
                 val values = ContentValues().apply {
                     put(MediaStore.Video.Media.DISPLAY_NAME, "Zine_${stamp()}.mp4")
@@ -528,7 +539,7 @@ class MainActivity : Activity() {
                 val media = newMediaRecorder()
                 recorder = media
                 configureRecorder(media, recorderDescriptor!!.fileDescriptor, actualQuality)
-                createRecordingSession(device, texture, media, actualQuality)
+                createRecordingSession(device, texture, media, actualQuality, allowFallback = !isForced4k60)
             } catch (e: Exception) {
                 runOnUiThread {
                     cleanupFailedRecording()
@@ -592,7 +603,14 @@ class MainActivity : Activity() {
                         addTarget(recorderOut)
                         set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                         set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
-                        supportedFpsRange(quality.fps)?.let { set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
+                        val fpsRange = if (quality.width == 3840 && quality.fps == 60) {
+                            cameraManager.getCameraCharacteristics(cameraId)
+                                .get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+                                ?.firstOrNull { it.lower == 60 && it.upper == 60 }
+                                ?: throw IllegalStateException("Exact [60,60] FPS range unavailable")
+                        } else supportedFpsRange(quality.fps)
+                            ?: throw IllegalStateException("No compatible ${quality.fps} FPS range")
+                        set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
                         cropRegion()?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
                     }.build()
                     configured.setRepeatingRequest(request, null, cameraHandler)
@@ -607,7 +625,7 @@ class MainActivity : Activity() {
                     runOnUiThread {
                         cleanupFailedRecording()
                         shutter.isEnabled = true
-                        setStatus("Recorder start failed: ${e.message}")
+                        setStatus("Recorder prepare/start failed: ${e.javaClass.simpleName}: ${e.message ?: "no detail"}")
                         createPreviewSession()
                     }
                     runCatching { media.reset() }
@@ -615,7 +633,14 @@ class MainActivity : Activity() {
                 }
             }
             override fun onConfigureFailed(failed: CameraCaptureSession) {
-                if (allowFallback && recorderDescriptor != null) {
+                if (!allowFallback) {
+                    runOnUiThread {
+                        cleanupFailedRecording()
+                        shutter.isEnabled = true
+                        setStatus("Force 4K60 Camera2 session rejected (onConfigureFailed). No downgrade; retry or choose another mode.")
+                        createPreviewSession()
+                    }
+                } else if (allowFallback && recorderDescriptor != null) {
                     try {
                         media.reset()
                         configureRecorder(media, recorderDescriptor!!.fileDescriptor, videoQualities[1])
