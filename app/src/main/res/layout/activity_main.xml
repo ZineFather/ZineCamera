@@ -1,43 +1,73 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootCameraLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="@color/zine_black"
-    android:paddingStart="16dp"
-    android:paddingEnd="16dp"
-    android:paddingTop="10dp"
-    android:paddingBottom="12dp">
+    android:paddingStart="14dp"
+    android:paddingEnd="14dp">
 
     <LinearLayout
+        android:id="@+id/topBarContainer"
         android:layout_width="match_parent"
-        android:layout_height="48dp"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:orientation="horizontal">
+        android:paddingTop="6dp"
+        android:paddingBottom="4dp">
+
         <TextView
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="48dp"
             android:layout_weight="1"
+            android:gravity="center_vertical"
             android:text="ZINE CAMERA"
             android:textColor="@color/zine_text"
-            android:textSize="16sp"
-            android:letterSpacing="0.12" />
+            android:textSize="15sp"
+            android:fontFamily="sans"
+            android:letterSpacing="0.08" />
+
+        <ImageView
+            android:id="@+id/flashButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="10dp"
+            android:background="@drawable/bg_glass_pill"
+            android:src="@drawable/ic_flash_camera"
+            android:scaleType="centerInside"
+            android:tint="@color/zine_text"
+            android:contentDescription="Flash options" />
+
+        <TextView
+            android:id="@+id/timerButton"
+            android:layout_width="42dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="5dp"
+            android:gravity="center"
+            android:background="@drawable/bg_glass_pill"
+            android:text="OFF"
+            android:textColor="@color/zine_text"
+            android:textSize="10sp"
+            android:contentDescription="Timer options" />
+
         <TextView
             android:id="@+id/qualityButton"
-            android:layout_width="wrap_content"
-            android:layout_height="36dp"
+            android:layout_width="58dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="5dp"
             android:gravity="center"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
             android:background="@drawable/bg_glass_pill"
             android:text="3:4"
             android:textColor="@color/zine_text"
-            android:textSize="12sp" />
+            android:textSize="11sp"
+            android:contentDescription="Aspect ratio or video quality" />
+
         <TextView
             android:id="@+id/settingsButton"
-            android:layout_width="42dp"
-            android:layout_height="36dp"
-            android:layout_marginStart="8dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="5dp"
             android:gravity="center"
             android:background="@drawable/bg_glass_pill"
             android:text="⚙"
@@ -51,18 +81,44 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:layout_marginTop="6dp"
-        android:layout_marginBottom="8dp">
+        android:layout_marginTop="4dp"
+        android:layout_marginBottom="5dp">
+
         <TextureView
             android:id="@+id/cameraPreview"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
+
+        <FrameLayout
+            android:id="@+id/framingMiniContainer"
+            android:layout_width="116dp"
+            android:layout_height="132dp"
+            android:layout_gravity="top|end"
+            android:layout_marginTop="10dp"
+            android:layout_marginEnd="10dp"
+            android:background="@drawable/bg_status"
+            android:clipToOutline="true"
+            android:elevation="8dp"
+            android:visibility="gone">
+
+            <TextureView
+                android:id="@+id/framingMiniPreview"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <com.zinecamera.ZoomFramingMiniMap
+                android:id="@+id/framingMiniOverlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@android:color/transparent" />
+        </FrameLayout>
+
         <TextView
             android:id="@+id/statusText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="top|center_horizontal"
-            android:layout_marginTop="12dp"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="12dp"
             android:paddingStart="14dp"
             android:paddingEnd="14dp"
             android:paddingTop="8dp"
@@ -72,33 +128,6 @@
             android:textColor="@color/zine_text"
             android:textSize="11sp"
             android:maxLines="2" />
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="top|end"
-            android:orientation="vertical"
-            android:layout_marginTop="70dp">
-            <ImageView
-                android:id="@+id/flashButton"
-                android:layout_width="56dp"
-                android:layout_height="42dp"
-                android:padding="12dp"
-                android:scaleType="centerInside"
-                android:background="@drawable/bg_glass_pill"
-                android:src="@drawable/ic_flash_camera"
-                android:contentDescription="Toggle flash"
-                android:tint="@color/zine_text" />
-            <TextView
-                android:id="@+id/timerButton"
-                android:layout_width="56dp"
-                android:layout_height="42dp"
-                android:layout_marginTop="8dp"
-                android:gravity="center"
-                android:background="@drawable/bg_glass_pill"
-                android:text="3s"
-                android:textColor="@color/zine_text"
-                android:textSize="12sp" />
-        </LinearLayout>
     </FrameLayout>
 
     <LinearLayout
@@ -106,6 +135,7 @@
         android:layout_height="34dp"
         android:gravity="center_vertical"
         android:orientation="horizontal">
+
         <TextView
             android:id="@+id/zoomValue"
             android:layout_width="64dp"
@@ -113,6 +143,7 @@
             android:text="1.0x"
             android:textColor="@color/zine_text"
             android:textSize="14sp" />
+
         <SeekBar
             android:id="@+id/zoomSlider"
             android:layout_width="0dp"
@@ -122,6 +153,7 @@
             android:progress="0"
             android:progressTint="@color/zine_accent"
             android:thumbTint="@color/zine_text" />
+
         <TextView
             android:id="@+id/zoomMode"
             android:layout_width="54dp"
@@ -133,59 +165,87 @@
     </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/zoomPresetContainer"
         android:layout_width="match_parent"
-        android:layout_height="42dp"
+        android:layout_height="34dp"
         android:gravity="center"
         android:orientation="horizontal">
-        <TextView android:id="@+id/modePhoto" style="@style/ModePill" android:text="PHOTO" />
-        <TextView android:id="@+id/modeVideo" style="@style/ModePill" android:text="VIDEO" />
-        <TextView android:id="@+id/modePortrait" style="@style/ModePill" android:text="PORTRAIT" />
-        <TextView android:id="@+id/modeNight" style="@style/ModePill" android:text="NIGHT" />
-        <TextView android:id="@+id/modePro" style="@style/ModePill" android:text="PRO" />
+
+        <TextView android:id="@+id/zoomPreset1" style="@style/ModePill" android:text="1x" />
+        <TextView android:id="@+id/zoomPreset2" style="@style/ModePill" android:text="2x" />
+        <TextView android:id="@+id/zoomPreset4" style="@style/ModePill" android:text="4x" />
+        <TextView android:id="@+id/zoomPreset10" style="@style/ModePill" android:text="10x" />
     </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/bottomControlsContainer"
         android:layout_width="match_parent"
-        android:layout_height="88dp"
-        android:gravity="center"
-        android:orientation="horizontal">
-        <ImageView
-            android:id="@+id/galleryButton"
-            android:layout_width="52dp"
-            android:layout_height="52dp"
-            android:src="@android:drawable/ic_menu_gallery"
-            android:contentDescription="Open gallery"
-            android:tint="@color/zine_text"
-            android:background="@drawable/bg_glass_pill"
-            android:padding="14dp" />
-        <FrameLayout
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:foregroundGravity="center">
-            <View
-                android:id="@+id/shutterButton"
-                android:layout_width="68dp"
-                android:layout_height="68dp"
-                android:layout_gravity="center"
-                android:background="@drawable/bg_shutter" />
-            <TextView
-                android:id="@+id/recordIndicator"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="bottom|center_horizontal"
-                android:text="CAPTURE"
-                android:textColor="@color/zine_muted"
-                android:textSize="9sp" />
-        </FrameLayout>
-        <TextView
-            android:id="@+id/switchButton"
-            android:layout_width="52dp"
-            android:layout_height="52dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingTop="2dp"
+        android:paddingBottom="8dp">
+
+        <LinearLayout
+            android:id="@+id/modeContainer"
+            android:layout_width="match_parent"
+            android:layout_height="42dp"
             android:gravity="center"
-            android:background="@drawable/bg_glass_pill"
-            android:text="↻"
-            android:textColor="@color/zine_text"
-            android:textSize="25sp" />
+            android:orientation="horizontal">
+
+            <TextView android:id="@+id/modePhoto" style="@style/ModePill" android:text="PHOTO" />
+            <TextView android:id="@+id/modeVideo" style="@style/ModePill" android:text="VIDEO" />
+            <TextView android:id="@+id/modePortrait" style="@style/ModePill" android:text="PORTRAIT" />
+            <TextView android:id="@+id/modeNight" style="@style/ModePill" android:text="NIGHT" />
+            <TextView android:id="@+id/modePro" style="@style/ModePill" android:text="PRO" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="88dp"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:id="@+id/galleryButton"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:src="@android:drawable/ic_menu_gallery"
+                android:contentDescription="Open gallery"
+                android:tint="@color/zine_text"
+                android:background="@drawable/bg_glass_pill"
+                android:padding="14dp" />
+
+            <FrameLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1">
+
+                <View
+                    android:id="@+id/shutterButton"
+                    android:layout_width="68dp"
+                    android:layout_height="68dp"
+                    android:layout_gravity="center"
+                    android:background="@drawable/bg_shutter" />
+
+                <TextView
+                    android:id="@+id/recordIndicator"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="bottom|center_horizontal"
+                    android:text="CAPTURE"
+                    android:textColor="@color/zine_muted"
+                    android:textSize="9sp" />
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/switchButton"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:gravity="center"
+                android:background="@drawable/bg_glass_pill"
+                android:text="↻"
+                android:textColor="@color/zine_text"
+                android:textSize="25sp" />
+        </LinearLayout>
     </LinearLayout>
 </LinearLayout>
