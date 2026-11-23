@@ -401,10 +401,13 @@ class MainActivity : Activity() {
                 val supportedSizes = cameraManager.getCameraCharacteristics(cameraId)
                     .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                     ?.getOutputSizes(MediaRecorder::class.java).orEmpty()
-                if (supportedSizes.none { it.width == quality.width && it.height == quality.height })
-                    throw IllegalStateException("Resolution is not supported by this camera")
-                if (supportedFpsRange(quality.fps) == null)
-                    throw IllegalStateException("${quality.fps} FPS is not reported as supported")
+                val requestedSupported = supportedSizes.any { it.width == quality.width && it.height == quality.height } &&
+                    supportedFpsRange(quality.fps) != null
+                val actualQuality = if (requestedSupported) quality else videoQualities[1]
+                if (!requestedSupported) runOnUiThread {
+                    qualityButton.text = "1080p · 30"
+                    setStatus("${quality.label} unavailable; safely switching to 1080p30")
+                }
                 val values = ContentValues().apply {
                     put(MediaStore.Video.Media.DISPLAY_NAME, "Zine_${stamp()}.mp4")
                     put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
@@ -419,8 +422,8 @@ class MainActivity : Activity() {
                     ?: throw IllegalStateException("Cannot open video file")
                 val media = newMediaRecorder()
                 recorder = media
-                configureRecorder(media, recorderDescriptor!!.fileDescriptor, quality)
-                createRecordingSession(device, texture, media, quality)
+                configureRecorder(media, recorderDescriptor!!.fileDescriptor, actualQuality)
+                createRecordingSession(device, texture, media, actualQuality)
             } catch (e: Exception) {
                 runOnUiThread {
                     cleanupFailedRecording()
@@ -495,10 +498,14 @@ class MainActivity : Activity() {
                         setStatus("Recording ${quality.label}")
                     }
                 } catch (e: Exception) {
-                    runOnUiThread { setStatus("Recorder start failed: ${e.message}") }
+                    runOnUiThread {
+                        cleanupFailedRecording()
+                        shutter.isEnabled = true
+                        setStatus("Recorder start failed: ${e.message}")
+                        createPreviewSession()
+                    }
                     runCatching { media.reset() }
                     closeCameraSession()
-                    runOnUiThread { createPreviewSession() }
                 }
             }
             override fun onConfigureFailed(failed: CameraCaptureSession) {
@@ -506,11 +513,12 @@ class MainActivity : Activity() {
                     try {
                         media.reset()
                         configureRecorder(media, recorderDescriptor!!.fileDescriptor, videoQualities[1])
-                        runOnUiThread { setStatus("4K60 rejected; falling back to 1080p30") }
+                        runOnUiThread { setStatus("Selected mode rejected; falling back to 1080p30") }
                         createRecordingSession(device, texture, media, videoQualities[1], false)
                     } catch (e: Exception) {
                         runOnUiThread {
                             cleanupFailedRecording()
+                            shutter.isEnabled = true
                             setStatus("Video fallback failed: ${e.message}")
                             createPreviewSession()
                         }
@@ -519,6 +527,7 @@ class MainActivity : Activity() {
                     runOnUiThread {
                         setStatus("Video session rejected by camera")
                         cleanupFailedRecording()
+                        shutter.isEnabled = true
                         createPreviewSession()
                     }
                 }
