@@ -152,7 +152,7 @@ class MainActivity : Activity() {
         framingMiniMap = findViewById(R.id.framingMiniOverlay)
         topBarContainer = findViewById(R.id.topBarContainer)
         bottomControlsContainer = findViewById(R.id.bottomControlsContainer)
-        framingMiniContainer.visibility = View.GONE
+        framingMiniContainer.visibility = View.INVISIBLE
         miniPreview.surfaceTextureListener = miniTextureListener
         updateZoomPresetSelection()
         if (miniPreview.isAvailable) miniPreview.surfaceTexture?.let {
@@ -408,6 +408,13 @@ class MainActivity : Activity() {
         }
         qualityButton.text = if (mode == "VIDEO") selectedVideoQualityLabel() else aspectRatio
         recordIndicator.text = if (mode == "VIDEO") "TAP TO RECORD" else "CAPTURE"
+        val scroll = findViewById<android.widget.HorizontalScrollView>(R.id.modeScrollContainer)
+        val selectedId = modeIds.first { it.second == mode }.first
+        scroll.post {
+            val selected = findViewById<View>(selectedId)
+            val targetX = selected.left - (scroll.width - selected.width) / 2
+            scroll.smoothScrollTo(targetX.coerceAtLeast(0), 0)
+        }
     }
 
     private fun setZoomPreset(value: Float, source: View) {
@@ -440,7 +447,7 @@ class MainActivity : Activity() {
 
     private fun setFramingVisible(visible: Boolean) {
         if (!::framingMiniContainer.isInitialized) return
-        if (visible && !retryWithoutMiniPreview && miniPreview.isAvailable && miniPreviewSurface != null) {
+        if (visible && !retryWithoutMiniPreview && miniPreviewSurface != null) {
             if (framingMiniContainer.visibility != View.VISIBLE) {
                 framingMiniContainer.visibility = View.VISIBLE
                 framingMiniContainer.alpha = 0f
@@ -843,6 +850,34 @@ class MainActivity : Activity() {
                         setStatus("Recording ${quality.label}")
                     }
                 } catch (e: Exception) {
+                    if (quality.width == 3840 && quality.fps == 60) {
+                        val retryStarted = runCatching {
+                            val ranges = cameraManager.getCameraCharacteristics(cameraId)
+                                .get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES).orEmpty()
+                            val fallbackRange = ranges.filter { it.upper >= 60 }.maxByOrNull { it.upper }
+                                ?: ranges.maxByOrNull { it.upper }
+                                ?: throw IllegalStateException("No fallback AE FPS range")
+                            val retryRequest = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
+                                addTarget(previewOut)
+                                addTarget(recorderOut)
+                                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+                                set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fallbackRange)
+                                cropRegion()?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
+                            }.build()
+                            configured.setRepeatingRequest(retryRequest, null, cameraHandler)
+                            media.start()
+                            recording = true
+                        }.isSuccess
+                        if (retryStarted) {
+                            runOnUiThread {
+                                shutter.isEnabled = true
+                                recordIndicator.text = "● RECORDING"
+                                setStatus("Recording 4K · MediaRecorder 60 FPS request; Camera2 fallback AE range")
+                            }
+                            return
+                        }
+                    }
                     runOnUiThread {
                         cleanupFailedRecording()
                         shutter.isEnabled = true
