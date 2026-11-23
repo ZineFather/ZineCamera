@@ -873,6 +873,7 @@ class MainActivity : Activity() {
         previewSurface = null
         texture.setDefaultBufferSize(previewSize.width, previewSize.height)
         val previewOut = Surface(texture)
+        previewSurface = previewOut
         val recorderOut = media.surface
         device.createCaptureSession(listOf(previewOut, recorderOut), object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(configured: CameraCaptureSession) {
