@@ -157,7 +157,7 @@ class MainActivity : Activity() {
             }
             override fun onStartTrackingTouch(bar: SeekBar?) {}
             override fun onStopTrackingTouch(bar: SeekBar?) {}
-        }
+        })
         shutter.setOnClickListener {
             if (selectedMode == "VIDEO") {
                 if (recording) stopRecording() else startRecording()
