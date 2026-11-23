@@ -22,6 +22,7 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.MediaStoreOutputOptions
+import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.Quality
 import androidx.camera.video.QualitySelector
 import androidx.camera.video.Recorder
@@ -153,7 +154,7 @@ class MainActivity : ComponentActivity() {
                 val recorder = Recorder.Builder().setQualitySelector(
                     QualitySelector.fromOrderedList(
                         listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD),
-                        QualitySelector.FALLBACK_STRATEGY_LOWER
+                        FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
                     )
                 ).build()
                 videoCapture = VideoCapture.withOutput(recorder)
