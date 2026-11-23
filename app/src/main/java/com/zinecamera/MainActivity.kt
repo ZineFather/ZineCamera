@@ -433,7 +433,7 @@ class MainActivity : Activity() {
             miniPreviewSurface?.release()
             miniPreviewSurface = null
             setFramingVisible(false)
-            if (cameraDevice != null) createPreviewSession()
+            preview.post { if (cameraDevice != null) createPreviewSession() }
             return true
         }
         override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) = Unit
@@ -518,10 +518,10 @@ class MainActivity : Activity() {
                 override fun onConfigured(configured: CameraCaptureSession) {
                     session = configured
                     updateRepeatingRequest()
-                    setFramingVisible(zoom >= 4f)
+                    runOnUiThread { setFramingVisible(zoom >= 4f) }
                 }
                 override fun onConfigureFailed(failed: CameraCaptureSession) {
-                    setFramingVisible(false)
+                    runOnUiThread { setFramingVisible(false) }
                     setStatus("Preview configuration failed (wide preview stream may be unsupported)")
                 }
             }, cameraHandler)
