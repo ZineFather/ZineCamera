@@ -302,27 +302,61 @@ class MainActivity : Activity() {
         if (!::preview.isInitialized || !preview.isAvailable) return
         val viewWidth = preview.width.toFloat()
         val viewHeight = preview.height.toFloat()
-        if (viewWidth <= 0f || viewHeight <= 0f) return
-        val sensor = if (cameraId.isNotEmpty()) runCatching { sensorOrientation() }.getOrDefault(90) else 90
+        if (viewWidth <= 0f || viewHeight <= 0f || previewSize.width <= 0 || previewSize.height <= 0) return
+
+        val sensor = if (cameraId.isNotEmpty()) {
+            runCatching { sensorOrientation() }.getOrDefault(0)
+        } else 0
         val display = displayRotationDegrees()
-        val rotation = ((if (frontCamera) sensor + display else sensor - display) % 360 + 360) % 360
-        val swapped = rotation == 90 || rotation == 270
+        val relativeRotation = if (frontCamera) {
+            (sensor + display) % 360
+        } else {
+            (sensor - display + 360) % 360
+        }
+
+        // Build a source-buffer -> rotated-buffer -> view transform. Mapping the
+        // rotated bounds before scaling prevents the old sideways/cropped result.
+        val sourceRect = android.graphics.RectF(
+            0f, 0f, previewSize.width.toFloat(), previewSize.height.toFloat()
+        )
+        val rotateMatrix = Matrix().apply {
+            setRotate(relativeRotation.toFloat(), sourceRect.centerX(), sourceRect.centerY())
+        }
+        val rotatedBounds = android.graphics.RectF()
+        rotateMatrix.mapRect(rotatedBounds, sourceRect)
+
         val viewRect = android.graphics.RectF(0f, 0f, viewWidth, viewHeight)
-        val bufferRect = if (swapped) android.graphics.RectF(0f, 0f, previewSize.height.toFloat(), previewSize.width.toFloat())
-            else android.graphics.RectF(0f, 0f, previewSize.width.toFloat(), previewSize.height.toFloat())
-        bufferRect.offset(viewRect.centerX() - bufferRect.centerX(), viewRect.centerY() - bufferRect.centerY())
-        val matrix = Matrix()
-        matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL)
-        val scale = maxOf(viewHeight / bufferRect.height(), viewWidth / bufferRect.width())
-        matrix.postScale(scale, scale, viewRect.centerX(), viewRect.centerY())
-        // TextureView's transform maps the camera buffer into display coordinates.
-        // Apply the inverse of the sensor-relative rotation so the preview is upright.
-        val rotationDegrees = when (rotation) { 90 -> -90f; 180 -> 180f; 270 -> 90f; else -> 0f }
-        if (rotationDegrees != 0f) matrix.postRotate(rotationDegrees, viewRect.centerX(), viewRect.centerY())
+        val fitMatrix = Matrix()
+        fitMatrix.setRectToRect(rotatedBounds, viewRect, Matrix.ScaleToFit.CENTER)
+
+        // CENTER fit above preserves the rotated stream's aspect ratio. Scale
+        // uniformly to fill the selected 3:4 / 9:16 / 1:1 / Full preview window.
+        val rotatedWidth = rotatedBounds.width().coerceAtLeast(1f)
+        val rotatedHeight = rotatedBounds.height().coerceAtLeast(1f)
+        val fillScale = maxOf(viewWidth / rotatedWidth, viewHeight / rotatedHeight)
+        val fillMatrix = Matrix().apply {
+            setScale(fillScale, fillScale, rotatedBounds.centerX(), rotatedBounds.centerY())
+            postTranslate(
+                viewRect.centerX() - rotatedBounds.centerX(),
+                viewRect.centerY() - rotatedBounds.centerY()
+            )
+        }
+
+        val sourceToView = Matrix()
+        sourceToView.setConcat(fitMatrix, rotateMatrix)
+        val fill = Matrix()
+        fill.setRectToRect(rotatedBounds, viewRect, Matrix.ScaleToFit.FILL)
+        sourceToView.setConcat(fill, rotateMatrix)
+
         val nativeZoom = zoom.coerceAtMost(maxZoom).coerceAtLeast(1f)
         val softwareZoom = (zoom / nativeZoom).coerceAtLeast(1f)
-        if (softwareZoom > 1f) matrix.postScale(softwareZoom, softwareZoom, viewRect.centerX(), viewRect.centerY())
-        preview.setTransform(matrix)
+        if (softwareZoom > 1f) {
+            val zoomMatrix = Matrix().apply {
+                setScale(softwareZoom, softwareZoom, viewRect.centerX(), viewRect.centerY())
+            }
+            sourceToView.postConcat(zoomMatrix)
+        }
+        preview.setTransform(sourceToView)
     }
 
     private fun jpegOrientation(): Int {
