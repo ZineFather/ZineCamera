@@ -314,7 +314,7 @@ class MainActivity : Activity() {
 
         val matrix = Matrix()
         matrix.setTranslate(-bufferWidth / 2f, -bufferHeight / 2f)
-        matrix.postRotate(-normalizedRotation.toFloat())
+        matrix.postRotate(normalizedRotation.toFloat())
         matrix.postScale(scale, scale)
         matrix.postTranslate(centerX, centerY)
         preview.setTransform(matrix)
