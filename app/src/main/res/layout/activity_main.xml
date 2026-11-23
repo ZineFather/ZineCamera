@@ -101,11 +101,6 @@
             android:elevation="8dp"
             android:visibility="invisible">
 
-            <TextureView
-                android:id="@+id/framingMiniPreview"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
-
             <com.zinecamera.ZoomFramingMiniMap
                 android:id="@+id/framingMiniOverlay"
                 android:layout_width="match_parent"
