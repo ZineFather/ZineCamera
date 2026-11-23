@@ -1,33 +1,29 @@
 # ZineCamera
 
-An open-source Android camera project, initially targeting the Samsung Galaxy A52s 5G (SM-A528B).
+An Android camera project targeting Samsung Galaxy devices, with the Galaxy A52s 5G (SM-A528B) as the first test device.
 
-## Current status
+## Current build
 
-Early development. The first milestone provides a CameraX preview, photo capture, video recording, lens switching, a native zoom slider, and basic camera capability reporting.
+The current development build includes:
+- Live CameraX preview, photo capture, video recording, and front/rear camera switching.
+- Photo, video, portrait, night, and pro mode selectors. Portrait/night/pro are currently UI placeholders; their dedicated imaging pipelines are not implemented yet.
+- Flash toggle and 3/10-second photo timer.
+- Video quality selection (UHD/FHD/HD) using CameraX's supported quality fallback.
+- Native camera zoom, plus experimental software crop for saved photos up to 1000x. Digital crop magnifies existing pixels and cannot restore missing detail.
+- A 4K60 diagnostic that checks camera stream sizes, AE frame-rate ranges, and available video encoders. It does not force 4K60 recording.
 
-## Goals
+## Important limitations
 
-- Camera-style interface with photo and video modes
-- Smooth zoom for preview and recorded output, within the camera's reported range
-- Pro controls and camera capability diagnostics
-- Investigate high-frame-rate recording modes, including 1080p120 and 4K60 where the device camera HAL exposes compatible streams
-- Test rooted-device integrations only when safe, reproducible, and device-specific
-
-## Hardware limitations
-
-The app cannot create sensor, ISP, encoder, or Camera HAL capabilities that the device does not expose. A displayed resolution/FPS option is not proof that the resulting file was recorded at that mode. High-speed modes require compatible camera stream configurations and recording pipelines. Unsupported combinations may fail or fall back.
-
-Extreme digital zoom enlarges/crops existing pixels; it does not create optical detail. The app reports supported limits rather than claiming unsupported performance.
+A capability appearing in diagnostics does not guarantee that every camera session can use that mode. 4K60 recording needs a compatible camera stream, FPS configuration, encoder, and recording pipeline. The current CameraX video pipeline does **not** yet force or guarantee 4K60. Extreme software zoom is currently applied to still photos only; video remains within the camera's native zoom range.
 
 ## Build
 
-Open this repository in Android Studio with JDK 17 and build the app module.
+Open in Android Studio with JDK 17, or run the GitHub Actions workflow to build a debug APK. Test on the actual target device and firmware before treating a feature as supported.
 
-## Device target
+## Target device
 
 - Samsung Galaxy A52s 5G (SM-A528B)
-- Android 8.0+ baseline; test on the actual target firmware.
+- Android 8.0+ baseline
 
 ## License
 
