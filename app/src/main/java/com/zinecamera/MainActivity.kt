@@ -326,27 +326,23 @@ class MainActivity : Activity() {
         rotateMatrix.mapRect(rotatedBounds, sourceRect)
 
         val viewRect = android.graphics.RectF(0f, 0f, viewWidth, viewHeight)
-        val fitMatrix = Matrix()
-        fitMatrix.setRectToRect(rotatedBounds, viewRect, Matrix.ScaleToFit.CENTER)
-
-        // CENTER fit above preserves the rotated stream's aspect ratio. Scale
-        // uniformly to fill the selected 3:4 / 9:16 / 1:1 / Full preview window.
         val rotatedWidth = rotatedBounds.width().coerceAtLeast(1f)
         val rotatedHeight = rotatedBounds.height().coerceAtLeast(1f)
         val fillScale = maxOf(viewWidth / rotatedWidth, viewHeight / rotatedHeight)
-        val fillMatrix = Matrix().apply {
-            setScale(fillScale, fillScale, rotatedBounds.centerX(), rotatedBounds.centerY())
-            postTranslate(
-                viewRect.centerX() - rotatedBounds.centerX(),
-                viewRect.centerY() - rotatedBounds.centerY()
-            )
-        }
+        val translateX = viewRect.centerX() - rotatedBounds.centerX() * fillScale
+        val translateY = viewRect.centerY() - rotatedBounds.centerY() * fillScale
 
+        // Uniform scale + centered translation: fills the selected preview ratio
+        // without stretching the camera image.
+        val fitMatrix = Matrix().apply {
+            setValues(floatArrayOf(
+                fillScale, 0f, translateX,
+                0f, fillScale, translateY,
+                0f, 0f, 1f
+            ))
+        }
         val sourceToView = Matrix()
         sourceToView.setConcat(fitMatrix, rotateMatrix)
-        val fill = Matrix()
-        fill.setRectToRect(rotatedBounds, viewRect, Matrix.ScaleToFit.FILL)
-        sourceToView.setConcat(fill, rotateMatrix)
 
         val nativeZoom = zoom.coerceAtMost(maxZoom).coerceAtLeast(1f)
         val softwareZoom = (zoom / nativeZoom).coerceAtLeast(1f)
@@ -354,7 +350,9 @@ class MainActivity : Activity() {
             val zoomMatrix = Matrix().apply {
                 setScale(softwareZoom, softwareZoom, viewRect.centerX(), viewRect.centerY())
             }
-            sourceToView.postConcat(zoomMatrix)
+            val zoomedTransform = Matrix()
+            zoomedTransform.setConcat(zoomMatrix, sourceToView)
+            sourceToView.set(zoomedTransform)
         }
         preview.setTransform(sourceToView)
     }
