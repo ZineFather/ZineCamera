@@ -648,12 +648,13 @@ class MainActivity : Activity() {
 
     private fun photoCropRegion(): Rect? {
         val base = cropRegion() ?: activeArray ?: return null
-        val ratio = when (aspectRatio) {
+        val displayRatio = when (aspectRatio) {
             "3:4" -> 3f / 4f
             "9:16" -> 9f / 16f
             "1:1" -> 1f
             else -> return base
         }
+        val ratio = if (sensorOrientation() % 180 == 90) 1f / displayRatio else displayRatio
         val currentRatio = base.width().toFloat() / base.height().toFloat()
         return if (currentRatio > ratio) {
             val width = (base.height() * ratio).roundToInt().coerceAtLeast(2)
