@@ -406,7 +406,11 @@ class MainActivity : Activity() {
         }
     }
 
-    @Suppress("DEPRECATION")\n    private fun newMediaRecorder(): MediaRecorder =\n        if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else MediaRecorder()\n\n    private fun configureRecorder(media: MediaRecorder, fd: FileDescriptor, width: Int, height: Int, fps: Int) {
+    @Suppress("DEPRECATION")
+    private fun newMediaRecorder(): MediaRecorder =
+        if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else MediaRecorder()
+
+    private fun configureRecorder(media: MediaRecorder, fd: FileDescriptor, width: Int, height: Int, fps: Int) {
         media.reset()
         media.setAudioSource(MediaRecorder.AudioSource.MIC)
         media.setVideoSource(MediaRecorder.VideoSource.SURFACE)
