@@ -150,6 +150,9 @@ class MainActivity : Activity() {
         bottomControlsContainer = findViewById(R.id.bottomControlsContainer)
         framingMiniContainer.visibility = View.GONE
         miniPreview.surfaceTextureListener = miniTextureListener
+        if (miniPreview.isAvailable) miniPreview.surfaceTexture?.let {
+            miniTextureListener.onSurfaceTextureAvailable(it, miniPreview.width, miniPreview.height)
+        }
     }
 
     private fun wireControls() {
@@ -405,13 +408,13 @@ class MainActivity : Activity() {
             miniPreviewSurface?.release()
             miniPreviewSurface = Surface(surface)
             if (cameraDevice != null) createPreviewSession()
-            if (zoom >= 4f) setFramingVisible(true)
         }
         override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
         override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean {
             closeCameraSession()
             miniPreviewSurface?.release()
             miniPreviewSurface = null
+            setFramingVisible(false)
             if (cameraDevice != null) createPreviewSession()
             return true
         }
@@ -464,6 +467,9 @@ class MainActivity : Activity() {
 
     private fun createPreviewSession() {
         val device = cameraDevice ?: return
+        closeCameraSession()
+        runCatching { previewSurface?.release() }
+        previewSurface = null
         try {
             val texture = preview.surfaceTexture ?: return
             texture.setDefaultBufferSize(previewSize.width, previewSize.height)
@@ -494,8 +500,12 @@ class MainActivity : Activity() {
                 override fun onConfigured(configured: CameraCaptureSession) {
                     session = configured
                     updateRepeatingRequest()
+                    setFramingVisible(zoom >= 4f)
                 }
-                override fun onConfigureFailed(failed: CameraCaptureSession) = setStatus("Preview configuration failed")
+                override fun onConfigureFailed(failed: CameraCaptureSession) {
+                    setFramingVisible(false)
+                    setStatus("Preview configuration failed (wide preview stream may be unsupported)")
+                }
             }, cameraHandler)
         } catch (e: Exception) {
             setStatus("Preview failed: ${e.message ?: e.javaClass.simpleName}")
@@ -711,6 +721,8 @@ class MainActivity : Activity() {
 
     private fun createRecordingSession(device: CameraDevice, texture: android.graphics.SurfaceTexture, media: MediaRecorder, quality: VideoQuality, allowFallback: Boolean = true) {
         closeCameraSession()
+        runCatching { previewSurface?.release() }
+        previewSurface = null
         texture.setDefaultBufferSize(1920, 1080)
         val previewOut = Surface(texture)
         val recorderOut = media.surface
@@ -839,6 +851,10 @@ class MainActivity : Activity() {
 
     private fun closeCamera() {
         closeCameraSession()
+        runCatching { previewSurface?.release() }
+        previewSurface = null
+        runCatching { miniPreviewSurface?.release() }
+        miniPreviewSurface = null
         runCatching { cameraDevice?.close() }
         cameraDevice = null
         runCatching { imageReader?.close() }
