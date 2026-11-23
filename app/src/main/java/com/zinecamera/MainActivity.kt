@@ -260,7 +260,7 @@ class MainActivity : Activity() {
             imageReader = ImageReader.newInstance(photoSize.width, photoSize.height, android.graphics.ImageFormat.JPEG, 2)
             imageReader?.setOnImageAvailableListener({ reader ->
                 val image = reader.acquireNextImage() ?: return@setOnImageAvailableListener
-                val bytes = image.planes[0].buffer.let { buffer -> ByteArray(buffer.remaining()).also(buffer::get) }
+                val bytes = image.planes[0].buffer.let { buffer -> ByteArray(buffer.remaining()).also { buffer.get(it) } }
                 image.close()
                 val uri = photoPendingUri ?: return@setOnImageAvailableListener
                 try {
