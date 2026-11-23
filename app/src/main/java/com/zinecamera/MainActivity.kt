@@ -301,9 +301,9 @@ class MainActivity : Activity() {
         val normalizedRotation = ((rotation % 360) + 360) % 360
         val rotated = normalizedRotation == 90 || normalizedRotation == 270
 
-        // TextureView.setTransform works in view coordinates. Build the transform
-        // from the view rectangle to the rotated camera-buffer rectangle, then
-        // center-crop it to fill the complete preview viewport.
+        // Camera2 buffers are landscape on many phones even when the UI is portrait.
+        // Map the view to the correctly rotated buffer rectangle, then center-crop
+        // the result so the preview fills the entire TextureView without black bars.
         val centerX = viewWidth / 2f
         val centerY = viewHeight / 2f
         val rotatedWidth = if (rotated) bufferHeight else bufferWidth
@@ -314,14 +314,14 @@ class MainActivity : Activity() {
 
         val matrix = Matrix()
         matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL)
-
-        val fillScale = maxOf(viewWidth / rotatedWidth, viewHeight / rotatedHeight)
+        val fillScale = maxOf(viewHeight / rotatedHeight, viewWidth / rotatedWidth)
         val nativeZoom = zoom.coerceAtMost(maxZoom).coerceAtLeast(1f)
         val softwareZoom = (zoom / nativeZoom).coerceAtLeast(1f)
-        val scale = fillScale * softwareZoom
-        matrix.setScale(scale, scale, centerX, centerY)
-        if (normalizedRotation != 0) {
-            matrix.postRotate(normalizedRotation.toFloat(), centerX, centerY)
+        matrix.postScale(fillScale * softwareZoom, fillScale * softwareZoom, centerX, centerY)
+        when (normalizedRotation) {
+            90 -> matrix.postRotate(-90f, centerX, centerY)
+            270 -> matrix.postRotate(90f, centerX, centerY)
+            180 -> matrix.postRotate(180f, centerX, centerY)
         }
         preview.setTransform(matrix)
     }
