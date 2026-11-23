@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.MediaCodecList
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -140,6 +141,7 @@ class MainActivity : ComponentActivity() {
             timerSeconds = when (timerSeconds) { 0 -> 3; 3 -> 10; else -> 0 }
             Toast.makeText(this, "Timer: ${if (timerSeconds == 0) "Off" else "${timerSeconds}s"}", Toast.LENGTH_SHORT).show()
         }, 1f)
+        quickRow.addView(makeButton("4K60 TEST") { probe4k60() }, 1f)
         quickRow.addView(makeButton("QUALITY") {
             selectedQuality = when (selectedQuality) {
                 Quality.FHD -> Quality.UHD
@@ -238,6 +240,31 @@ class MainActivity : ComponentActivity() {
             status.text = "Experimental digital zoom • native %.1fx + software crop".format(Locale.US, maxNativeZoom)
         } else if (requestedZoom > maxNativeZoom && isVideo) {
             status.text = "Video zoom limited to native %.1fx".format(Locale.US, maxNativeZoom)
+        }
+    }
+
+    private fun probe4k60() {
+        try {
+            val cam = camera ?: run { status.text = "Camera is not ready"; return }
+            val info = Camera2CameraInfo.from(cam.cameraInfo)
+            val map = info.getCameraCharacteristic(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            val camera4k = map?.getOutputSizes(android.media.MediaRecorder::class.java)
+                ?.any { it.width >= 3840 && it.height >= 2160 } == true
+            val fps60 = info.getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+                ?.any { it.upper >= 60 } == true
+            val encoder4k60 = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+                .filter { it.isEncoder }
+                .flatMap { codec -> codec.supportedTypes.filter { it.startsWith("video/") }.map { type -> codec to type } }
+                .any { (codec, type) ->
+                    try {
+                        codec.getCapabilitiesForType(type).videoCapabilities
+                            .areSizeAndRateSupported(3840, 2160, 60.0)
+                    } catch (_: Exception) { false }
+                }
+            status.text = "4K60 probe • Camera 4K: $camera4k • AE 60fps: $fps60 • Encoder 4K60: $encoder4k60 • diagnostic only"
+            Toast.makeText(this, "Probe complete. This does not force unsupported recording modes.", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            status.text = "4K60 probe unavailable: ${e.localizedMessage ?: "unknown error"}"
         }
     }
 
