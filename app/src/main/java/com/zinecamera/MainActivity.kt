@@ -129,19 +129,19 @@ class MainActivity : ComponentActivity() {
                     else -> "Photo mode ready"
                 }
                 if (isVideo) applyZoom(requestedZoom)
-            }, 1f)
+            })
         }
         val quickRow = row()
         quickRow.addView(makeButton("FLASH") {
             flashEnabled = !flashEnabled
             imageCapture?.flashMode = if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
             Toast.makeText(this, if (flashEnabled) "Flash on" else "Flash off", Toast.LENGTH_SHORT).show()
-        }, 1f)
+        })
         quickRow.addView(makeButton("TIMER") {
             timerSeconds = when (timerSeconds) { 0 -> 3; 3 -> 10; else -> 0 }
             Toast.makeText(this, "Timer: ${if (timerSeconds == 0) "Off" else "${timerSeconds}s"}", Toast.LENGTH_SHORT).show()
-        }, 1f)
-        quickRow.addView(makeButton("4K60 TEST") { probe4k60() }, 1f)
+        })
+        quickRow.addView(makeButton("4K60 TEST") { probe4k60() })
         quickRow.addView(makeButton("QUALITY") {
             selectedQuality = when (selectedQuality) {
                 Quality.FHD -> Quality.UHD
@@ -150,16 +150,16 @@ class MainActivity : ComponentActivity() {
             }
             Toast.makeText(this, "Requested video quality: ${selectedQualityLabel()}", Toast.LENGTH_SHORT).show()
             status.text = "Quality applies after camera restart; selected ${selectedQualityLabel()}"
-        }, 1f)
-        quickRow.addView(makeButton("GALLERY") { openGallery() }, 1f)
+        })
+        quickRow.addView(makeButton("GALLERY") { openGallery() })
 
         val actionRow = row()
         actionRow.addView(makeButton("SWITCH") {
             facing = if (facing == CameraSelector.LENS_FACING_BACK) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
             startCamera()
-        }, 1f)
-        actionRow.addView(makeButton("CAPTURE") { takePhoto() }, 1.4f)
-        actionRow.addView(makeButton("REC / STOP") { toggleRecording() }, 1f)
+        })
+        actionRow.addView(makeButton("CAPTURE") { takePhoto() })
+        actionRow.addView(makeButton("REC / STOP") { toggleRecording() })
 
         root.addView(header)
         root.addView(previewView, previewParams)
