@@ -5,6 +5,7 @@
         <item name="android:navigationBarColor">@color/zine_black</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="colorPrimary">@color/zine_accent</item>
+        <item name="popupMenuStyle">@style/ZinePopupMenu</item>
     </style>
     <style name="ModePill">
         <item name="android:layout_width">0dp</item>
@@ -15,5 +16,18 @@
         <item name="android:textSize">9sp</item>
         <item name="android:textColor">@color/zine_muted</item>
         <item name="android:background">@drawable/bg_glass_pill</item>
+    </style>
+    <style name="ModeSelectorItem">
+        <item name="android:layout_width">78dp</item>
+        <item name="android:layout_height">34dp</item>
+        <item name="android:layout_marginStart">4dp</item>
+        <item name="android:layout_marginEnd">4dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textSize">10sp</item>
+        <item name="android:textColor">@color/zine_muted</item>
+        <item name="android:background">@drawable/bg_glass_pill</item>
+    </style>
+    <style name="ZinePopupMenu" parent="Widget.Material3.PopupMenu">
+        <item name="android:popupBackground">@drawable/bg_popup_menu</item>
     </style>
 </resources>
